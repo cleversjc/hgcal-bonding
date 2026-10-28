@@ -125,6 +125,24 @@ function requireMappingSnapshot(mapping, record) {
   if (mapping.status === 'cell_only' && (!record.target || record.wires.length)) invalid('仅位点的记录快照');
   if (mapping.status === 'wire_only' && (record.target || !record.wires.length)) invalid('仅 wire 的记录快照');
 }
+function requireOgpSnapshot(record) {
+  // OGP evidence is optional for schema-v1 records. A present snapshot records
+  // the operator's choice only; it never adds to or changes the wire mapping.
+  if (!Object.hasOwn(record, 'ogp')) return;
+  const snapshot = record.ogp;
+  if (!isObject(snapshot) || record.side !== 'front') invalid('OGP 候选确认快照');
+  const isSignalCell = value => typeof value === 'string' && /^C[1-9]\d{0,2}$/.test(value) && Number(value.slice(1)) <= 198;
+  if (!isSignalCell(snapshot.reportedCell)) invalid('OGP 原始 cell 编号');
+  if (!isSignalCell(snapshot.selectedCell) || snapshot.selectedCell !== record.target) invalid('OGP 确认 cell 与记录位点的对应');
+  if (!Array.isArray(snapshot.candidateTargets) || !snapshot.candidateTargets.length || snapshot.candidateTargets.length > 198 || snapshot.candidateTargets.some(target => !isSignalCell(target))) invalid('OGP 候选 cell 列表');
+  const candidates = new Set(snapshot.candidateTargets);
+  if (candidates.size !== snapshot.candidateTargets.length) invalid('OGP 候选 cell 列表（编号重复）');
+  if (!candidates.has(snapshot.reportedCell) || !candidates.has(snapshot.selectedCell)) invalid('OGP 候选列表与原始 / 确认 cell 的对应');
+  requireString(snapshot.version, 'OGP 候选规则版本', { max: 200 });
+  requireString(snapshot.source, 'OGP 候选依据', { max: 2048 });
+  if (snapshot.ranking !== 'review_order_not_probability') invalid('OGP 候选排序依据');
+  requireDate(snapshot.confirmedAt, 'OGP 现场确认时间');
+}
 function validateState(data) {
   if (!isObject(data) || data.schemaVersion !== 1) invalid('数据版本');
   if (!Array.isArray(data.modules) || !Array.isArray(data.records) || !Array.isArray(data.importedMapping)) invalid('必要的数据列表');
@@ -174,6 +192,7 @@ function validateState(data) {
     }
     if (record.history.at(-1).status !== record.status) invalid('当前状态与处理历史的对应');
     requireMappingSnapshot(record.mapping, record);
+    requireOgpSnapshot(record);
   }
   if (data.activeModuleId !== null && (typeof data.activeModuleId !== 'string' || !modules.has(data.activeModuleId))) invalid('当前模块');
   for (const entry of data.importedMapping) {
