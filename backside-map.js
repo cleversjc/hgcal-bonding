@@ -63,13 +63,13 @@ export function renderBacksideMap({ target = 'H', machineView = false, flagged =
       '<button type="button" class="' + (!machineView ? 'active' : '') + '" data-act="back-orientation" data-view="reference" aria-pressed="' + !machineView + '">参考图朝向</button>' +
       '<button type="button" class="' + (machineView ? 'active' : '') + '" data-act="back-orientation" data-view="machine" aria-pressed="' + !!machineView + '">机台打线朝向</button>' +
     '</div>' +
-    '<p class="backside-orientation-note">' + (machineView ? '已将参考图上下、左右反转：H 在右下。' : '与提供的图片一致：H 在左上，G 在右上。') + '</p>' +
+    '<p class="backside-orientation-note">' + (machineView ? 'H 在右下 · 已旋转 180°' : 'H 在左上') + '</p>' +
     '<div class="backside-canvas" role="group" aria-label="六个背面 Cell 的空间位置，' + orientation + '">' +
       '<svg class="backside-grid" viewBox="0 0 ' + WIDTH + ' ' + HEIGHT + '" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><g' + (machineView ? ' transform="rotate(180 ' + WIDTH / 2 + ' ' + HEIGHT / 2 + ')"' : '') + '>' + honeycomb(target, flaggedTargets) + '</g></svg>' +
-      '<div class="backside-center-label" aria-hidden="true"><span>BACKSIDE</span><strong>点击字母选择位置</strong><small>每个位置 5 根线</small></div>' + buttons +
+      '<div class="backside-center-label" aria-hidden="true"><strong>点选位置</strong></div>' + buttons +
     '</div>' +
     '<div class="backside-map-key"><span><i class="backside-key-selected"></i>当前选择</span><span><i class="backside-key-flagged"></i>有异常记录</span></div>' +
     '<div class="backside-sequence"><span>实际打线顺序</span><strong class="mono">H <i>→</i> G <i>→</i> L <i>→</i> K <i>→</i> J <i>→</i> I</strong></div>' +
-    '<div class="backside-source"><span>位置按所提供的背面图标注</span><a href="assets/backside-reference.png" target="_blank" rel="noopener">查看原图 ↗</a></div>' +
+    '<div class="backside-source"><a href="assets/backside-reference.png" target="_blank" rel="noopener">查看原图 ↗</a></div>' +
   '</div>';
 }
