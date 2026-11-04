@@ -3,7 +3,7 @@ import { normalizeTarget, normalizeWire, wireKey, parseMapping, validateAgainstB
 import { loadState, saveState, makeBackup, readBackup, mergeBackup } from './storage.js';
 import { BACKSIDE_POSITIONS, renderBacksideMap } from './backside-map.js';
 import { initMobileApp, getMobileAppState, promptMobileInstall } from './mobile-app.js';
-import { OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest } from './ogp.js';
+import { OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, setOgpCompletion, filterOgpRows, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest } from './ogp.js';
 import { parseOgpPdf } from './ogp-pdf.js';
 
 const $ = (s, root = document) => root.querySelector(s);
@@ -45,7 +45,7 @@ let channel;
 let stagedOgp = null, ogpController = null, ogpRowContext = null;
 const ogpImageUrls = new Map();
 const ui = {view:'lookup',side:'front',mode:'cell',target:'C19',wire:'',query:'19',zoom:1,rotated:false,backMachine:false,filter:'all',recordSearch:'',scope:'module'};
-Object.assign(ui, { ogpModule: 'all', ogpStatus: 'all', ogpLimits: {} });
+Object.assign(ui, { ogpModule: 'all', ogpStatus: 'unfinished', ogpLimits: {} });
 const activeModule = () => state.modules.find(m => m.id === state.activeModuleId);
 const moduleRecords = () => state.records.filter(r => r.moduleId === state.activeModuleId && r.status !== 'void');
 const date = (v, full = false) => new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',...(full?{year:'numeric'}:{}),hour12:false}).format(new Date(v));
@@ -203,14 +203,17 @@ function ogpImageUrl(id) {
 function ogpImageButton(row,preview=false) {
   return '<button class="ogp-thumbnail" data-act="ogp-image" data-id="'+e(row.id)+'" '+(preview?'data-preview="true"':'')+' aria-label="放大 '+e(row.reportedCell)+' 原始检测图片"><img src="'+ogpImageUrl(row.imageId)+'" width="160" height="120" loading="lazy" alt="'+e(row.reportedCell)+' 原始检测图，保留红色标注"><span>放大图片</span></button>';
 }
+function ogpCompletionButton(row) {
+  return '<button class="button '+(row.completedAt?'small':'primary')+'" data-act="'+(row.completedAt?'ogp-reopen':'ogp-complete')+'" data-id="'+e(row.id)+'">'+(row.completedAt?'恢复到未完成':'确认修改完成')+'</button>';
+}
 function ogpPage() {
   const all=state.ogpRows||[],duplicates=duplicateOgpWires(all),modules=[...new Set(all.map(r=>r.moduleId))].sort();
-  const rows=sortedOgpRows(all.filter(r=>(ui.ogpModule==='all'||r.moduleId===ui.ogpModule)&&(ui.ogpStatus==='all'||r.status===ui.ogpStatus)));
-  const groups=modules.filter(id=>ui.ogpModule==='all'||id===ui.ogpModule).map(id=>{
+  const rows=sortedOgpRows(filterOgpRows(all,ui.ogpModule,ui.ogpStatus));
+  const groups=modules.filter(id=>rows.some(r=>r.moduleId===id)).map(id=>{
     const group=rows.filter(r=>r.moduleId===id),limit=ui.ogpLimits[id]||20;
-    return '<section class="card ogp-module"><div class="card-head"><div><h2 class="mono">'+e(id)+'</h2><p class="small muted">'+group.length+' 条 · Wire 升序</p></div></div><div class="ogp-grid">'+group.slice(0,limit).map(r=>'<article class="ogp-item" data-detection-id="'+e(r.id)+'">'+ogpImageButton(r)+'<div class="ogp-item-info"><div class="ogp-wire-row"><b class="mono">W'+e(r.wire)+'</b><span class="badge '+(r.status==='pending'?'amber':r.status==='anomaly'?'red':'')+'">'+OGP_STATUSES[r.status]+'</span></div><p>'+e(r.reportedCell)+' · YOLO confidence '+r.confidence.toFixed(2)+'</p><p class="small muted">原始 W'+e(r.originalWire)+' · 第 '+r.sourcePage+' 页 / 第 '+r.sourceIndex+' 项</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+(r.note?'<p class="ogp-note">'+e(r.note)+'</p>':'')+'<button class="button small" data-act="ogp-edit" data-id="'+e(r.id)+'">检查 / 修正 Wire</button></div></article>').join('')+'</div>'+(group.length>limit?'<div class="card-pad"><button class="button" data-act="ogp-more" data-module="'+e(id)+'">继续显示（余 '+(group.length-limit)+' 条）</button></div>':'')+'</section>';
+    return '<section class="card ogp-module"><div class="card-head"><div><h2 class="mono">'+e(id)+'</h2><p class="small muted">'+group.length+' 条 · Wire 升序</p></div></div><div class="ogp-grid">'+group.slice(0,limit).map(r=>'<article class="ogp-item" data-detection-id="'+e(r.id)+'">'+ogpImageButton(r)+'<div class="ogp-item-info"><div class="ogp-wire-row"><b class="mono">W'+e(r.wire)+'</b><span class="badge '+(r.completedAt?'':r.status==='pending'?'amber':r.status==='anomaly'?'red':'')+'">'+(r.completedAt?'已完成':OGP_STATUSES[r.status])+'</span></div><p>'+e(r.reportedCell)+' · YOLO confidence '+r.confidence.toFixed(2)+'</p><p class="small muted">原始 W'+e(r.originalWire)+' · 第 '+r.sourcePage+' 页 / 第 '+r.sourceIndex+' 项</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+(r.note?'<p class="ogp-note">'+e(r.note)+'</p>':'')+'<div class="ogp-item-actions">'+ogpCompletionButton(r)+'<button class="button small" data-act="ogp-edit" data-id="'+e(r.id)+'">修正 Wire / 备注</button></div></div></article>').join('')+'</div>'+(group.length>limit?'<div class="card-pad"><button class="button" data-act="ogp-more" data-module="'+e(id)+'">继续显示（余 '+(group.length-limit)+' 条）</button></div>':'')+'</section>';
   }).join('');
-  return '<div class="page-title"><div><h1>OGP 待确认清单</h1><p>每条检测对应一根定位 Wire</p></div>'+button('ogp-import','导入报告','upload','primary')+'</div>'+mobileUsageStrip()+'<div class="ogp-toolbar"><label>模块<select id="ogp-module"><option value="all">全部模块</option>'+modules.map(id=>'<option '+(ui.ogpModule===id?'selected':'')+'>'+e(id)+'</option>').join('')+'</select></label><label>检查状态<select id="ogp-status"><option value="all">全部状态</option>'+Object.entries(OGP_STATUSES).map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'</select></label>'+button('ogp-export','导出清单 CSV','download','small')+button('backup','完整 JSON 备份','download','small')+'</div><p class="ogp-count">'+all.length+' 条检测 · '+all.filter(r=>r.status==='pending').length+' 条待确认 · '+duplicates.size+' 条重复 Wire 待核对</p><p class="essential-note ogp-confidence">Confidence 仅为 YOLO 检测置信度，不表示异常严重程度或实际漏胶概率。CSV 包含图片 ID；图片字节请用完整 JSON 备份。</p>'+(all.length?groups:'<section class="card empty-state"><h3>导入 OGP 报告，生成现场检查清单</h3><p>先预览模块、Wire 和原图，核对后再保存到本机。</p>'+button('ogp-import','选择 PDF / 预处理 JSON','upload','primary')+'</section>')+'<details class="quiet-details"><summary>导入记录与格式说明</summary><p>支持带文字标签的 HGCal YOLO 网格报告。续页沿用本文件上一页模块；扫描件或其他版式不会猜测导入。PDF 图片按原始分辨率无损裁取并保留标注。</p><p>重复 Cell / Wire 各自保留。清单只用于人工检查，不自动创建 Bonding 异常记录。</p>'+((state.ogpImports||[]).map(r=>'<p>'+e(r.source.name)+' · '+r.rowCount+' 条 · '+e(r.operator)+' · '+date(r.importedAt,true)+'<br><span class="mono">SHA-256 '+e(r.source.sha256)+'</span></p>').join(''))+'</details>';
+  return '<div class="page-title"><div><h1>OGP 待确认清单</h1><p>处理完成后点一下，直接移出待办</p></div>'+button('ogp-import','导入报告','upload','primary')+'</div>'+mobileUsageStrip()+'<div class="ogp-toolbar"><label>模块<select id="ogp-module"><option value="all">全部模块</option>'+modules.map(id=>'<option '+(ui.ogpModule===id?'selected':'')+'>'+e(id)+'</option>').join('')+'</select></label><label>清单筛选<select id="ogp-status">'+[['unfinished','未完成'],['completed','已完成'],['all','全部记录']].map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'<optgroup label="按检查结果查看未完成项">'+Object.entries(OGP_STATUSES).map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'</optgroup></select></label>'+button('ogp-export','导出清单 CSV','download','small')+button('backup','完整 JSON 备份','download','small')+'</div><p class="ogp-count">'+all.length+' 条检测 · '+all.filter(r=>!r.completedAt).length+' 条未完成 · '+all.filter(r=>r.completedAt).length+' 条已完成 · '+duplicates.size+' 条重复 Wire 待核对</p><p class="essential-note ogp-confidence">Confidence 仅为 YOLO 检测置信度，不表示异常严重程度或实际漏胶概率。CSV 包含图片 ID；图片字节请用完整 JSON 备份。</p>'+(all.length?(rows.length?groups:'<section class="card empty-state"><h3>'+(ui.ogpStatus==='unfinished'?'当前清单已全部完成':'没有符合条件的条目')+'</h3><p>可通过上方筛选查看已完成记录和原图。</p></section>'):'<section class="card empty-state"><h3>导入 OGP 报告，生成现场检查清单</h3><p>先预览模块、Wire 和原图，核对后再保存到本机。</p>'+button('ogp-import','选择 PDF / 预处理 JSON','upload','primary')+'</section>')+'<details class="quiet-details"><summary>导入记录与格式说明</summary><p>支持带文字标签的 HGCal YOLO 网格报告。续页沿用本文件上一页模块；扫描件或其他版式不会猜测导入。PDF 图片按原始分辨率无损裁取并保留标注。</p><p>重复 Cell / Wire 各自保留。清单只用于人工检查，不自动创建 Bonding 异常记录。</p>'+((state.ogpImports||[]).map(r=>'<p>'+e(r.source.name)+' · '+r.rowCount+' 条 · '+e(r.operator)+' · '+date(r.importedAt,true)+'<br><span class="mono">SHA-256 '+e(r.source.sha256)+'</span></p>').join(''))+'</details>';
 }
 function ogpImportModal() {
   modalKind='ogp-import';stagedOgp=null;
@@ -230,14 +233,14 @@ function ogpEditModal(id) {
   ogpRowContext=structuredClone(row);modalKind='ogp-edit';
   const duplicates=duplicateOgpWires(state.ogpRows||[]);
   openModal('检查 / 修正 Wire',e(row.moduleId)+' · '+e(row.reportedCell)+' · 第 '+row.sourcePage+' 页 / '+row.sourceIndex,
-    '<div class="ogp-edit-evidence">'+ogpImageButton(row)+'<div><h3 class="mono">W'+e(row.wire)+'</h3><p>原始映射 W'+e(row.originalWire)+'</p><p>YOLO confidence '+row.confidence.toFixed(2)+'</p><p class="small muted">仅检测置信度</p>'+(duplicates.has(row.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+'</div></div><form id="ogp-edit-form"><div class="form-grid"><div class="field"><label class="req" for="ogp-wire">定位 Wire</label><input id="ogp-wire" name="wire" required inputmode="numeric" value="'+e(row.wire)+'"></div><div class="field"><label for="ogp-check-status">检查结果</label><select id="ogp-check-status" name="status">'+Object.entries(OGP_STATUSES).map(([v,l])=>'<option value="'+v+'" '+(row.status===v?'selected':'')+'>'+l+'</option>').join('')+'</select></div><div class="field full"><label class="req" for="ogp-edit-operator">记录人</label><input id="ogp-edit-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||row.history.at(-1).operator)+'"></div><div class="field full"><label for="ogp-reason">Wire 修正原因（修改编号时必填）</label><input id="ogp-reason" name="reason" maxlength="1000" placeholder="例如：现场位置核对后修正"></div><div class="field full"><label for="ogp-note">检查备注</label><textarea id="ogp-note" name="note" maxlength="4000">'+e(row.note)+'</textarea></div></div></form><details class="quiet-details"><summary>原始映射与修改历史（'+row.history.length+'）</summary><p>'+e(row.mapping.source)+' · '+e(row.mapping.version)+'<br>'+row.mapping.wires.map(w=>'W'+e(w)).join(' / ')+'</p>'+row.history.map(h=>'<p>'+date(h.at,true)+' · '+e(h.operator)+' · W'+e(h.wire)+' · '+OGP_STATUSES[h.status]+'<br>'+e(h.reason)+(h.note?'<br>'+e(h.note):'')+'</p>').join('')+'</details>',button('close-modal','取消')+'<button class="button primary" type="submit" form="ogp-edit-form">保存检查结果</button>',true);
+    '<div class="ogp-edit-evidence">'+ogpImageButton(row)+'<div><h3 class="mono">W'+e(row.wire)+'</h3><p>原始映射 W'+e(row.originalWire)+'</p><p>YOLO confidence '+row.confidence.toFixed(2)+'</p><p class="small muted">仅检测置信度</p>'+(row.completedAt?'<p>已完成 · '+date(row.completedAt,true)+'</p>':'')+(duplicates.has(row.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+'</div></div><form id="ogp-edit-form"><div class="form-grid"><div class="field"><label class="req" for="ogp-wire">定位 Wire</label><input id="ogp-wire" name="wire" required inputmode="numeric" value="'+e(row.wire)+'"></div><div class="field"><label for="ogp-check-status">检查结果</label><select id="ogp-check-status" name="status">'+Object.entries(OGP_STATUSES).map(([v,l])=>'<option value="'+v+'" '+(row.status===v?'selected':'')+'>'+l+'</option>').join('')+'</select></div><div class="field full"><label class="req" for="ogp-edit-operator">记录人</label><input id="ogp-edit-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||row.history.at(-1).operator)+'"></div><div class="field full"><label for="ogp-reason">Wire 修正原因（修改编号时必填）</label><input id="ogp-reason" name="reason" maxlength="1000" placeholder="例如：现场位置核对后修正"></div><div class="field full"><label for="ogp-note">检查备注</label><textarea id="ogp-note" name="note" maxlength="4000">'+e(row.note)+'</textarea></div></div></form><details class="quiet-details"><summary>原始映射与修改历史（'+row.history.length+'）</summary><p>'+e(row.mapping.source)+' · '+e(row.mapping.version)+'<br>'+row.mapping.wires.map(w=>'W'+e(w)).join(' / ')+'</p>'+row.history.map(h=>'<p>'+date(h.at,true)+' · '+e(h.operator)+' · W'+e(h.wire)+' · '+(h.action==='complete'?'已完成':h.action==='reopen'?'恢复为未完成':OGP_STATUSES[h.status])+'<br>'+e(h.reason)+(h.note?'<br>'+e(h.note):'')+'</p>').join('')+'</details>',button('close-modal','取消')+'<button class="button primary" type="submit" form="ogp-edit-form">保存检查结果</button>',true);
 }
 function ogpImageModal(id,preview=false) {
   const row=(preview?stagedOgp?.rows:state.ogpRows||[])?.find(r=>r.id===id);if(!row)return;
   if(dirty&&modalKind==='ogp-edit'&&!confirm('检查结果还未保存，放弃编辑并查看原图？'))return;
   modalKind='ogp-image';
   openModal('原始检测图片',e(row.moduleId)+' · '+e(row.reportedCell)+' · W'+row.wire+' · 第 '+row.sourcePage+' 页',
-    '<div class="ogp-zoom-tools"><button class="button small" data-act="ogp-zoom" data-zoom="1">适合屏幕</button><button class="button small" data-act="ogp-zoom" data-zoom="2">2×</button><button class="button small" data-act="ogp-zoom" data-zoom="4">4×</button></div><div class="ogp-zoom-viewport"><img id="ogp-zoom-image" src="'+ogpImageUrl(row.imageId)+'" alt="完整检测原图，保留红色标注"></div><p class="essential-note">放大后可横向拖动查看；手机也可双指缩放。</p>',preview?button('ogp-preview-return','返回导入预览'):'<button class="button primary" data-act="ogp-edit" data-id="'+e(row.id)+'">返回检查</button>',true);
+    '<div class="ogp-zoom-tools"><button class="button small" data-act="ogp-zoom" data-zoom="1">适合屏幕</button><button class="button small" data-act="ogp-zoom" data-zoom="2">2×</button><button class="button small" data-act="ogp-zoom" data-zoom="4">4×</button></div><div class="ogp-zoom-viewport"><img id="ogp-zoom-image" src="'+ogpImageUrl(row.imageId)+'" alt="完整检测原图，保留红色标注"></div><p class="essential-note">放大后可横向拖动查看；手机也可双指缩放。</p>',preview?button('ogp-preview-return','返回导入预览'):button('close-modal','返回清单')+'<button class="button small" data-act="ogp-edit" data-id="'+e(row.id)+'">修正 Wire</button>'+ogpCompletionButton(row),true);
   dirty=preview;
 }
 function mappingPage() {
@@ -376,20 +379,31 @@ function search(value) {
 async function onAction(el) {
   const a=el.dataset.act;
   if(a==='ogp-import')ogpImportModal();
+  if(a==='ogp-complete'||a==='ogp-reopen'){
+    const id=el.dataset.id,completed=a==='ogp-complete';el.disabled=true;
+    try{
+      await commit(s=>{
+        if(!(s.ogpRows||[]).some(r=>r.id===id))throw new Error('这条检测不存在，请刷新清单。');
+        return {...s,ogpRows:s.ogpRows.map(r=>r.id===id?setOgpCompletion(r,completed,s.modules.find(m=>m.id===r.moduleId)?.operator||r.history.at(-1).operator):r)};
+      });
+      if(modalKind==='ogp-image')closeModal(true);
+      toast(completed?'已完成，已移出未完成清单。':'已恢复到未完成清单。');
+    }finally{if(el.isConnected)el.disabled=false;}
+  }
   if(a==='ogp-edit')ogpEditModal(el.dataset.id);
   if(a==='ogp-image')ogpImageModal(el.dataset.id,el.dataset.preview==='true');
   if(a==='ogp-preview-return')showOgpPreview();
   if(a==='ogp-zoom')$('#ogp-zoom-image').style.width=(Number(el.dataset.zoom)*100)+'%';
   if(a==='ogp-more'){ui.ogpLimits[el.dataset.module]=(ui.ogpLimits[el.dataset.module]||20)+20;render();}
   if(a==='ogp-export'){
-    const rows=(state.ogpRows||[]).filter(r=>(ui.ogpModule==='all'||r.moduleId===ui.ogpModule)&&(ui.ogpStatus==='all'||r.status===ui.ogpStatus));
+    const rows=filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus);
     download('bonding-ogp-'+stamp()+'.csv',ogpCsv(rows,state.ogpImports||[],state.ogpRows||[]),'text/csv;charset=utf-8');
     toast('已导出 '+rows.length+' 条检测；图片字节请用完整 JSON 备份。');
   }
   if(a==='ogp-confirm'){
     if(!stagedOgp||!$('#ogp-confirmed')?.checked){error('请先核对预览并勾选确认。');return;}
     const draft=stagedOgp;el.disabled=true;
-    try{await commit(s=>appendOgpImport(s,draft));ui.view='ogp';ui.ogpModule='all';ui.ogpStatus='all';closeModal(true);render();toast('已保存 '+draft.rows.length+' 条检测及完整图片。');}
+    try{await commit(s=>appendOgpImport(s,draft));ui.view='ogp';ui.ogpModule='all';ui.ogpStatus='unfinished';closeModal(true);render();toast('已保存 '+draft.rows.length+' 条检测及完整图片。');}
     finally{if(el.isConnected)el.disabled=false;}
   }
   if(a==='nav'){ui.view=el.dataset.view;render();window.scrollTo({top:0});}

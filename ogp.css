@@ -11,6 +11,8 @@
 .ogp-item-info{min-width:0;flex:1}
 .ogp-item-info>p{font-size:12px;line-height:1.6;margin-top:7px}
 .ogp-item-info>.button{margin-top:12px;min-height:44px}
+.ogp-item-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.ogp-item-actions>.button{min-height:44px}
 .ogp-wire-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .ogp-wire-row>b{font-size:24px}
 .ogp-thumbnail{display:flex;flex-direction:column;align-items:center;gap:6px;padding:0;border:0;background:transparent;cursor:zoom-in;flex:0 0 140px;width:140px;align-self:flex-start;text-align:center;color:var(--muted);font-size:11px}

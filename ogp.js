@@ -92,6 +92,19 @@ export function editOgpRow(row, values, now = new Date().toISOString()) {
     history: [...row.history, { at: now, operator: values.operator, wire: editedWire, status: values.status, note: values.note, reason: values.reason || '更新检查结果' }] };
 }
 
+export function setOgpCompletion(row, completed, operator, now = new Date().toISOString()) {
+  if (typeof completed !== 'boolean' || !text(operator, 60) || !date(now)) fail('完成记录信息无效。');
+  if (!!row.completedAt === completed) return row;
+  return { ...row, completedAt: completed ? now : null, completedBy: completed ? operator : null, updatedAt: now,
+    history: [...row.history, { at: now, operator, wire: row.wire, status: row.status, note: row.note,
+      reason: completed ? '确认修改完成' : '恢复为未完成', action: completed ? 'complete' : 'reopen' }] };
+}
+
+export function filterOgpRows(rows, moduleId = 'all', view = 'unfinished') {
+  return rows.filter(row => (moduleId === 'all' || row.moduleId === moduleId) &&
+    (view === 'all' || (view === 'completed' ? !!row.completedAt : !row.completedAt && (view === 'unfinished' || row.status === view))));
+}
+
 export function sortedOgpRows(rows) {
   return [...rows].sort((a, b) => a.moduleId.localeCompare(b.moduleId) || Number(a.wire) - Number(b.wire) || a.createdAt.localeCompare(b.createdAt) || a.sourcePage - b.sourcePage || a.sourceIndex - b.sourceIndex || a.id.localeCompare(b.id));
 }
@@ -103,8 +116,8 @@ export function duplicateOgpWires(rows) {
 export function ogpCsv(rows, reports, duplicateRows = rows) {
   const sources = new Map(reports.map(r => [r.id, r.source]));
   const duplicates = duplicateOgpWires(duplicateRows);
-  return '\uFEFF' + csvEncode(['detection_id','import_id','module_id','ogp_cell','original_wire','wire','yolo_confidence','status','note','image_id','source_pdf','source_sha256','source_page','source_index','duplicate_wire_review','mapping_snapshot','created_at','updated_at','audit_history'],
-    sortedOgpRows(rows).map(r => [r.id, r.importId, r.moduleId, r.reportedCell, r.originalWire, r.wire, r.confidence, r.status, r.note, r.imageId, sources.get(r.importId)?.name || '', sources.get(r.importId)?.sha256 || '', r.sourcePage, r.sourceIndex, duplicates.has(r.id), JSON.stringify(r.mapping), r.createdAt, r.updatedAt, JSON.stringify(r.history)]));
+  return '\uFEFF' + csvEncode(['detection_id','import_id','module_id','ogp_cell','original_wire','wire','yolo_confidence','status','note','image_id','source_pdf','source_sha256','source_page','source_index','duplicate_wire_review','mapping_snapshot','created_at','updated_at','audit_history','completed_at','completed_by'],
+    sortedOgpRows(rows).map(r => [r.id, r.importId, r.moduleId, r.reportedCell, r.originalWire, r.wire, r.confidence, r.status, r.note, r.imageId, sources.get(r.importId)?.name || '', sources.get(r.importId)?.sha256 || '', r.sourcePage, r.sourceIndex, duplicates.has(r.id), JSON.stringify(r.mapping), r.createdAt, r.updatedAt, JSON.stringify(r.history), r.completedAt || '', r.completedBy || '']));
 }
 
 // Optional extension of schema-v1: legacy backups without these arrays remain valid.
@@ -131,6 +144,11 @@ export function validateOgpState(state) {
     if (!object(row.mapping) || row.mapping.target !== row.reportedCell || !Array.isArray(row.mapping.wires) || !row.mapping.wires.length || row.mapping.wires.some(w => !wire(w)) || row.mapping.wires[0] !== row.originalWire || !text(row.mapping.source, 2048) || !text(row.mapping.version, 1024)) fail('OGP 原始映射快照无效。');
     if (!Array.isArray(row.history) || !row.history.length) fail('OGP 修改记录缺失。');
     for (const event of row.history) if (!object(event) || !date(event.at) || !text(event.operator, 60) || !wire(event.wire) || !Object.hasOwn(OGP_STATUSES, event.status) || !text(event.note, 4000, true) || !text(event.reason, 1000)) fail('OGP 修改记录无效。');
+    for (const event of row.history) if (event.action !== undefined && !['complete', 'reopen'].includes(event.action)) fail('OGP 完成操作无效。');
+    const completion = row.history.findLast(event => event.action);
+    if (row.completedAt != null) {
+      if (!date(row.completedAt) || !text(row.completedBy, 60) || completion?.action !== 'complete' || completion.at !== row.completedAt || completion.operator !== row.completedBy) fail('OGP 完成记录与历史不一致。');
+    } else if (row.completedBy != null || completion?.action === 'complete') fail('OGP 完成记录缺失。');
     const last = row.history.at(-1);
     if (row.history[0].wire !== row.originalWire || row.history[0].at !== row.createdAt || last.at !== row.updatedAt || last.wire !== row.wire || last.status !== row.status || last.note !== row.note) fail('OGP 当前值与修改历史不一致。');
     if (!reports.find(r => r.id === row.importId)?.pages.some(p => p.page === row.sourcePage)) fail('OGP 来源页不存在。');
