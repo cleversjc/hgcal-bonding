@@ -179,7 +179,8 @@ function filteredRecords() {
 }
 function recordsPage() {
   const rows=state.records.filter(r=>(ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId)&&r.status!=='void');
-  return '<div class="page-title"><div><h1>异常记录</h1></div>'+button('new-record','新增记录','plus','primary title-action')+'</div><div class="stats-row">'+[['记录总数',rows.length,'log'],['待处理',rows.filter(r=>r.status==='open').length,'clock'],['待复检',rows.filter(r=>r.status==='repaired').length,'repair'],['已关闭',rows.filter(r=>r.status==='closed').length,'check']].map(([s,n,ic])=>'<div class="stat-box"><div><p>'+s+'</p><strong>'+n+'</strong></div><div class="stat-icon">'+icon(ic)+'</div></div>').join('')+'</div><section class="card"><div class="card-head"><div class="flex wrap"><h2>记录列表</h2><select id="record-scope" aria-label="模块范围" style="width:auto;min-height:31px;font-size:10px;padding:6px 9px"><option value="module" '+(ui.scope==='module'?'selected':'')+'>当前模块'+(!activeModule()?'（未选择，显示全部）':'')+'</option><option value="all" '+(ui.scope==='all'?'selected':'')+'>全部模块</option></select></div>'+button('export-csv','导出 CSV','download','small')+'</div><div class="filter-row"><div class="filter-chips">'+[['all','全部'],['open','待处理'],['repaired','待复检'],['closed','已关闭'],['void','已作废']].map(([s,t])=>'<button data-act="filter" data-filter="'+s+'" class="'+(ui.filter===s?'active':'')+'">'+t+'</button>').join('')+'</div><div class="filter-search">'+icon('search')+'<input id="record-search" aria-label="搜索异常记录" placeholder="搜索模块、cell、wire 或异常" value="'+e(ui.recordSearch)+'"></div></div><div id="record-list">'+recordsList()+'</div></section><details class="quiet-details"><summary>记录说明</summary><p>误录可在详情中改为“已作废”。作废后不计入有效异常，保留原始内容，当前不能撤销。CSV 导出当前筛选结果；照片请用完整 JSON 备份。</p></details>';
+  const overall=(state.overallRecords||[]).filter(r=>ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  return '<div class="page-title"><div><h1>Bonding 记录</h1></div><div class="flex wrap">'+button('overall-record','总体情况','camera','small')+button('new-record','新增异常','plus','primary title-action')+'</div></div><div class="stats-row">'+[['记录总数',rows.length,'log'],['待处理',rows.filter(r=>r.status==='open').length,'clock'],['待复检',rows.filter(r=>r.status==='repaired').length,'repair'],['已关闭',rows.filter(r=>r.status==='closed').length,'check']].map(([label,n,ic])=>'<div class="stat-box"><div><p>'+label+'</p><strong>'+n+'</strong></div><div class="stat-icon">'+icon(ic)+'</div></div>').join('')+'</div><section class="card"><div class="card-head"><div class="flex wrap"><h2>异常记录</h2><select id="record-scope" aria-label="模块范围" style="width:auto;min-height:31px;font-size:10px;padding:6px 9px"><option value="module" '+(ui.scope==='module'?'selected':'')+'>当前模块'+(!activeModule()?'（未选择，显示全部）':'')+'</option><option value="all" '+(ui.scope==='all'?'selected':'')+'>全部模块</option></select></div>'+button('export-csv','导出 CSV','download','small')+'</div><div class="filter-row"><div class="filter-chips">'+[['all','全部'],['open','待处理'],['repaired','待复检'],['closed','已关闭'],['void','已作废']].map(([key,label])=>'<button data-act="filter" data-filter="'+key+'" class="'+(ui.filter===key?'active':'')+'">'+label+'</button>').join('')+'</div><div class="filter-search">'+icon('search')+'<input id="record-search" aria-label="搜索异常记录" placeholder="搜索模块、cell、wire 或异常" value="'+e(ui.recordSearch)+'"></div></div><div id="record-list">'+recordsList()+'</div></section><section class="card overall-records-card"><div class="card-head"><h2>总体 Bonding 情况</h2><div class="flex wrap"><span class="small muted">'+overall.length+' 条</span>'+button('export-overall-csv','导出 CSV','download','small')+'</div></div>'+(overall.length?'<div class="overall-list">'+overall.slice(0,12).map(r=>'<button class="record-mini" data-act="overall-detail" data-id="'+e(r.id)+'"><i class="record-dot '+(r.condition==='good'?'closed':'')+'"></i><span><b>'+({good:'整体良好',attention:'需要关注',issue:'发现异常'}[r.condition])+'</b><small>'+e(r.moduleId)+' · '+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+date(r.createdAt)+'</small></span><span class="spacer"></span><span class="mono">'+r.photos.length+' 张照片</span></button>').join('')+'</div>':'<div class="card-pad small muted">还没有总体情况记录。</div>')+'</section><details class="quiet-details"><summary>记录说明</summary><p>逐根拉力测试按 Wire 保存；总体情况独立记录，不计入异常数量。照片请用完整 JSON 备份。</p></details>';
 }
 function recordsList() {
   const rows=filteredRecords();
@@ -219,6 +220,16 @@ function recordModal() {
     : '<div class="field"><label for="issue-target">实际 Cell / 位点</label><input id="issue-target" name="target" value="'+e(ui.target)+'" placeholder="C1–C198 / A–F / M–R" autocomplete="off"></div><div class="field"><label for="issue-wires">受影响的 Wire（选填）</label><input id="issue-wires" name="wires" value="'+e(ui.wire)+'" placeholder="如 403,404" autocomplete="off" inputmode="text"><span class="help">逗号分隔；留空表示整组。</span></div>';
   openModal('记录 bonding 异常',e(activeModule().id)+' · '+sideName(ui.side),'<form id="record-form"><div class="form-grid">'+locationFields+'<div class="field full"><span class="field-label req">异常类型 *</span><div class="choice-grid">'+TYPES.map((t,i)=>'<label><input type="radio" name="type" value="'+e(t)+'" '+(!i?'checked':'')+'>'+e(t)+'</label>').join('')+'</div></div><div class="field"><label for="issue-expected">计划线数（选填）</label><input id="issue-expected" name="expected" type="number" min="0" max="100" step="1" inputmode="numeric" value="'+(back?5:entry?entry.wires.length:'')+'" placeholder="按实际计划"></div><div class="field"><label for="issue-actual">实际线数（选填）</label><input id="issue-actual" name="actual" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="当前观测根数"></div><div class="field"><label for="issue-phase">发现阶段</label><select id="issue-phase" name="phase">'+selectOptions(PHASES,'绑定中')+'</select></div><div class="field"><label class="req" for="issue-operator">记录人</label><input id="issue-operator" name="operator" required maxlength="60" value="'+e(activeModule().operator)+'"></div><div class="field"><label for="issue-force">拉力 gf（选填）</label><input id="issue-force" name="force" type="number" min="0" max="10000" step="any" inputmode="decimal" placeholder="保留测量值"></div><div class="field"><label for="issue-endpoint">位置 / 端点（选填）</label><select id="issue-endpoint" name="endpoint">'+selectOptions(['未指定','First bond','Second bond','Heel','Wire span / loop','Sensor 端','PCB 端'],'未指定')+'</select></div><div class="field full"><label for="issue-note">现象与备注</label><textarea id="issue-note" name="note" maxlength="4000" placeholder="异常现象或处理情况"></textarea></div><div class="field full"><span class="field-label">现场照片（最多 3 张）</span><label class="upload-button">'+icon('camera')+'拍照 / 选择照片<input id="issue-photos" type="file" accept="image/*" multiple capture="environment"></label><div class="photos-row" id="draft-photos"></div></div></div></form>',button('close-modal','取消')+'<button type="submit" form="record-form" id="save-record" class="button primary">'+icon('check')+'保存异常</button>',true);
 }
+function overallModal() {
+  if(!activeModule()){moduleModal(false);return;}
+  modalKind='overall';pendingPhotos=[];photoBusy=false;
+  openModal('记录总体 Bonding 情况',e(activeModule().id),'<form id="overall-form"><div class="form-grid"><div class="field"><label for="overall-side">范围</label><select id="overall-side" name="side"><option value="all">整体</option><option value="front">正面</option><option value="back">背面</option></select></div><div class="field"><label for="overall-condition">总体情况</label><select id="overall-condition" name="condition"><option value="good">整体良好</option><option value="attention">需要关注</option><option value="issue">发现异常</option></select></div><div class="field full"><label class="req" for="overall-operator">记录人</label><input id="overall-operator" name="operator" required maxlength="60" value="'+e(activeModule().operator)+'"></div><div class="field full"><label for="overall-note">备注</label><textarea id="overall-note" name="note" maxlength="4000" placeholder="例如：整体 bonding 情况良好。"></textarea></div><div class="field full"><span class="field-label">整体照片（最多 6 张）</span><label class="upload-button">'+icon('camera')+'拍照 / 选择照片<input id="overall-photos" type="file" accept="image/*" multiple capture="environment"></label><div class="photos-row" id="draft-photos"></div></div></div></form>',button('close-modal','取消')+'<button type="submit" form="overall-form" id="save-overall" class="button primary">'+icon('check')+'保存总体情况</button>',true);
+}
+function overallDetail(id) {
+  const r=(state.overallRecords||[]).find(x=>x.id===id);if(!r)return;
+  const label={good:'整体良好',attention:'需要关注',issue:'发现异常'}[r.condition]||r.condition;
+  openModal('总体 Bonding 情况',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e(r.moduleId)+'</h3><span class="small muted">'+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+e(r.operator)+'</span></div><span class="badge">'+label+'</span></div>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<img width="110" height="90" src="'+e(p.data)+'" alt="总体 Bonding 照片 '+(i+1)+'">').join('')+'</div>',button('close-modal','关闭'),true);
+}
 function mappingSnapshot(target,wires,side,mappingEntries=entries,mappingMeta=state.mappingMeta) {
   if(side==='back') {
     if(!BACKSIDE_ORDER.includes(target))throw new Error('请选择背面 cell 位置。');
@@ -245,8 +256,9 @@ function checkTarget(value,side) {
 function recordDetail(id) {
   const r=state.records.find(x=>x.id===id); if(!r)return;
   modalKind='detail';
-  const data=[['模块',r.moduleId],['正 / 反面',sideName(r.side)],['记录人',r.operator],['发现阶段',r.phase],['计划 / 实际线数',(r.expected??'未填')+' / '+(r.actual??'未填')],['拉力 / 位置',(r.force===null||r.force===undefined?'未填':r.force+' gf')+' · '+r.endpoint],['机台程序',r.program||'未填'],[r.side==='back'?'记录方式':'映射状态',r.side==='back'?(r.wires.length?'历史记录（保留原始编号）':'按背面 cell 位置记录'):r.mapping.status==='documented'?'记录时有映射依据':'人工填写 / 待核对']];
-  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(p.data)+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
+  const data=[['模块',r.moduleId],['正 / 反面',sideName(r.side)],['记录人',r.operator],['发现阶段',r.phase],['计划 / 实际线数',(r.expected??'未填')+' / '+(r.actual??'未填')],['历史单值拉力',r.force===null||r.force===undefined?'未填':r.force+' gf'],['机台程序',r.program||'未填'],[r.side==='back'?'记录方式':'映射状态',r.side==='back'?(r.wires.length?'历史记录（保留原始编号）':'按背面 cell 位置记录'):r.mapping.status==='documented'?'记录时有映射依据':'人工填写 / 待核对']];
+  const pullBlock=(r.pullTests||[]).length?'<div class="divider"></div><h3>逐根拉力测试</h3><table class="mapping-table"><thead><tr><th>Wire</th><th>拉力</th><th>端点</th></tr></thead><tbody>'+r.pullTests.map(t=>'<tr><td class="mono">W'+e(t.wire)+'</td><td>'+e(t.force)+' gf</td><td>'+e(t.endpoint)+'</td></tr>').join('')+'</tbody></table>':'';
+  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+pullBlock+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(p.data)+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
 }
 function importModal() {
   modalKind='import';stagedImport=null;
@@ -262,10 +274,17 @@ function download(name,content,type) {
 }
 function stamp(){return new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');}
 function exportCsv() {
-  const headers=['record_id','module_id','module_type','program','side','cell_or_group','wires','anomaly','expected_wires','actual_wires','stage','pull_gf','endpoint','status','operator','created_at','updated_at','note','photo_count','mapping_status','mapping_version','mapping_source','mapping_snapshot','history'];
-  const rows=filteredRecords().map(r=>[r.id,r.moduleId,r.moduleType,r.program,r.side,r.target,r.wires.map(w=>'W'+w).join(';'),r.type,r.expected??'',r.actual??'',r.phase,r.force??'',r.endpoint,STATUS[r.status],r.operator,r.createdAt,r.updatedAt,r.note,r.photos.length,r.mapping.status,r.mapping.version,r.mapping.source,JSON.stringify(r.mapping),JSON.stringify(r.history)]);
+  const headers=['record_id','module_id','module_type','program','side','cell_or_group','wires','anomaly','expected_wires','actual_wires','stage','pull_gf','endpoint','status','operator','created_at','updated_at','note','photo_count','mapping_status','mapping_version','mapping_source','mapping_snapshot','history','pull_test_results'];
+  const rows=filteredRecords().map(r=>[r.id,r.moduleId,r.moduleType,r.program,r.side,r.target,r.wires.map(w=>'W'+w).join(';'),r.type,r.expected??'',r.actual??'',r.phase,r.force??'',r.endpoint,STATUS[r.status],r.operator,r.createdAt,r.updatedAt,r.note,r.photos.length,r.mapping.status,r.mapping.version,r.mapping.source,JSON.stringify(r.mapping),JSON.stringify(r.history),JSON.stringify(r.pullTests||[])]);
   download('bonding-records-'+stamp()+'.csv','\uFEFF'+csvEncode(headers,rows),'text/csv;charset=utf-8');
   toast('已导出 '+rows.length+' 条筛选记录；照片请使用完整备份。');
+}
+function exportOverallCsv() {
+  const rows=(state.overallRecords||[]).filter(r=>ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId);
+  const headers=['record_id','module_id','scope','condition','operator','created_at','note','photo_count'];
+  const data=rows.map(r=>[r.id,r.moduleId,r.side,r.condition,r.operator,r.createdAt,r.note,r.photos.length]);
+  download('bonding-overall-'+stamp()+'.csv','\\uFEFF'+csvEncode(headers,data),'text/csv;charset=utf-8');
+  toast('已导出 '+rows.length+' 条总体情况记录；照片请使用完整 JSON 备份。');
 }
 async function photoData(file) {
   if(!file.type.startsWith('image/'))throw new Error('请选择图片文件。');
@@ -324,6 +343,8 @@ async function onAction(el) {
   }
   if(a==='rotate'){ui.rotated=!ui.rotated;render();}
   if(a==='new-record')recordModal();
+  if(a==='overall-record')overallModal();
+  if(a==='overall-detail')overallDetail(el.dataset.id);
   if(a==='select-module'){
     const after=modalKind==='module-record';
     await commit(s=>({...s,activeModuleId:el.dataset.id}));
@@ -333,6 +354,7 @@ async function onAction(el) {
   if(a==='filter'){ui.filter=el.dataset.filter;render();}
   if(a==='clear-filter'){ui.filter='all';ui.recordSearch='';ui.scope='all';render();}
   if(a==='export-csv')exportCsv();
+  if(a==='export-overall-csv')exportOverallCsv();
   if(a==='backup'){download('bonding-backup-'+stamp()+'.json',JSON.stringify(makeBackup(state)), 'application/json');toast('已导出完整备份，包含照片与处理历史。');}
   if(a==='restore')restoreModal();
   if(a==='restore-confirm'){
@@ -402,14 +424,14 @@ document.addEventListener('change',async event=>{
       $('#backup-preview').innerHTML='<div class="notice info" style="margin-top:18px">'+icon('check')+'<div>文件校验通过：'+stagedBackup.modules.length+' 个模块，'+stagedBackup.records.length+' 条记录。<br>将补入 '+result.added+' 条；'+result.skipped+' 条同 ID 记录将跳过。'+(backupMapping.conflicts.length?'<br>另有 '+backupMapping.conflicts.length+' 个旧映射位点与当前参考表冲突；会保留原始数据，但暂停用于查号。':'')+'</div></div>';
       $('#restore-confirm').disabled=false;
     }
-    if(event.target.id==='issue-photos'){
-      const files=[...event.target.files];if(files.length+pendingPhotos.length>3)throw new Error('每条异常最多保存 3 张照片。');
+    if(event.target.id==='issue-photos'||event.target.id==='overall-photos'){
+      const files=[...event.target.files],limit=modalKind==='overall'?6:3;if(files.length+pendingPhotos.length>limit)throw new Error('照片数量超过上限（'+limit+' 张）。');
       photoBusy=true;event.target.disabled=true;$('#save-record').disabled=true;toast('正在处理照片…');
       const photos=[];for(const f of files)photos.push(await photoData(f));
       if(modalKind==='record'&&epoch===modalEpoch){pendingPhotos.push(...photos);dirty=true;drawDraftPhotos();toast('照片已加入，保存异常后留存在本机。');}
     }
   }catch(ex){if(event.target.id==='backup-file'){stagedBackup=null;$('#restore-confirm').disabled=true;}error(ex.message);}
-  finally{if(event.target.id==='issue-photos'&&epoch===modalEpoch){photoBusy=false;if($('#save-record'))$('#save-record').disabled=false;event.target.value='';event.target.disabled=false;}}
+  finally{if(['issue-photos','overall-photos'].includes(event.target.id)&&epoch===modalEpoch){photoBusy=false;if($('#save-record'))$('#save-record').disabled=false;event.target.value='';event.target.disabled=false;}}
 });
 document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target,formId=form.getAttribute('id');
@@ -429,6 +451,13 @@ document.addEventListener('submit',async event=>{
       });
       closeModal(true);toast('模块已创建：'+id);if(after)recordModal();
     }
+    if(formId==='overall-form'){
+      if(photoBusy)throw new Error('照片仍在处理中，请稍候。');
+      const operator=val('operator');if(!operator)throw new Error('请填写记录人。');
+      const now=new Date().toISOString(),record={id:uniqueId(),moduleId:activeModule().id,side:val('side'),condition:val('condition'),operator,note:val('note'),photos:[...pendingPhotos],createdAt:now};
+      await commit(s=>({...s,overallRecords:[...(s.overallRecords||[]),record]}));
+      closeModal(true);toast('总体 Bonding 情况已保存在本机。');
+    }
     if(formId==='record-form'){
       if(photoBusy)throw new Error('照片仍在处理中，请稍候。');
       if(!recordContext)throw new Error('记录上下文已关闭，请重新打开记录表单。');
@@ -439,13 +468,23 @@ document.addEventListener('submit',async event=>{
       if(wires.length>30)throw new Error('单条记录最多关联 30 根 wire。');
       if(new Set(wires.map(wireKey)).size!==wires.length)throw new Error('Wire 编号有重复，请核对。');
       const number=n=>val(n)===''?null:Number(val(n));
-      const expected=number('expected'),actual=number('actual'),force=number('force'),operator=val('operator');
+      const expected=number('expected'),actual=number('actual'),force=null,operator=val('operator');
+      const pullTests=val('pullTests').split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean).map((line,i)=>{
+        const parts=line.split(/[,，\\t]+/).map(x=>x.trim());
+        if(parts.length<2||parts.length>3)throw new Error('第 '+(i+1)+' 行格式应为：Wire 编号, 拉力 gf, 端点（可省略）。');
+        const wire=normalizeWire(parts[0]),value=Number(parts[1]),endpoint=parts[2]||'未指定';
+        if(!Number.isFinite(value)||value<0||value>10000)throw new Error('W'+wire+' 的拉力值必须是 0–10000 gf。');
+        return {wire,force:value,endpoint};
+      });
+      if(pullTests.length>30)throw new Error('单条记录最多填写 30 根拉力测试线。');
+      if(new Set(pullTests.map(x=>wireKey(x.wire))).size!==pullTests.length)throw new Error('逐根拉力测试中有重复 Wire 编号。');
+      for(const test of pullTests){const mapped=lookupWire(context.entries,test.wire,context.side);if(target&&mapped&&mapped.target!==target)throw new Error('W'+test.wire+' 对应 '+mapped.target+'，与当前位点 '+target+' 不一致。');const targetEntry=target?lookupTarget(context.entries,target,context.side):null;if(targetEntry&&!targetEntry.wires.some(w=>wireKey(w)===wireKey(test.wire)))throw new Error('W'+test.wire+' 不属于 '+target+'。');}
       if(!operator)throw new Error('请填写记录人。');
       if([expected,actual].some(n=>n!==null&&(!Number.isInteger(n)||n<0||n>100)))throw new Error('线数必须是 0–100 的整数。');
       if(force!==null&&(!Number.isFinite(force)||force<0||force>10000))throw new Error('请填写有效的拉力数值。');
       const now=new Date().toISOString(),mod=context.module;
       const snapshot=mappingSnapshot(target,wires,context.side,context.entries,context.mappingMeta);
-      const record={id:uniqueId(),moduleId:mod.id,moduleType:mod.type,program:mod.program,side:context.side,target,wires,type:val('type'),expected,actual,phase:val('phase'),force,endpoint:val('endpoint'),operator,note:val('note'),photos:[...pendingPhotos],status:'open',createdAt:now,updatedAt:now,mapping:snapshot,history:[{at:now,operator,status:'open',note:'创建异常记录'}]};
+      const record={id:uniqueId(),moduleId:mod.id,moduleType:mod.type,program:mod.program,side:context.side,target,wires,type:val('type'),expected,actual,phase:val('phase'),force,endpoint:val('endpoint'),pullTests,operator,note:val('note'),photos:[...pendingPhotos],status:'open',createdAt:now,updatedAt:now,mapping:snapshot,history:[{at:now,operator,status:'open',note:'创建异常记录'}]};
       await commit(s=>{if(!s.modules.some(m=>m.id===mod.id))throw new Error('原模块不存在，请重新选择模块。');return {...s,records:[...s.records,record]};});
       closeModal(true);toast('异常已保存在此设备。');
     }

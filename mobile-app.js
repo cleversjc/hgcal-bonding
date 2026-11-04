@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = '2026-11-03-clean-v1';
+const SHELL_VERSION = '2026-11-04-pull-overview-v1';
 let started = false;
 let installEvent = null;
 let registration = null;

@@ -2,7 +2,7 @@ import { getMappings, normalizeTarget, normalizeWire, wireKey } from './mapping.
 
 const NAME = 'hgcal-bonding-workbench';
 let connection;
-export function emptyState() { return { schemaVersion: 1, modules: [], records: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
+export function emptyState() { return { schemaVersion: 1, modules: [], records: [], overallRecords: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
 async function db() {
   if (connection) return connection;
   connection = await new Promise((resolve, reject) => {
@@ -54,7 +54,10 @@ export function mergeBackup(current, incoming) {
   const recordIds = new Set(records.map(r => r.id));
   let added = 0, skipped = 0;
   incoming.records.forEach(r => { if (recordIds.has(r.id)) skipped++; else { records.push(r); recordIds.add(r.id); added++; } });
-  return { state: { ...current, modules, records, activeModuleId: current.activeModuleId || incoming.activeModuleId, importedMapping: current.importedMapping.length ? current.importedMapping : incoming.importedMapping, mappingMeta: current.importedMapping.length ? current.mappingMeta : incoming.mappingMeta }, added, skipped };
+  const overallRecords = [...(current.overallRecords || [])];
+  const overallIds = new Set(overallRecords.map(r => r.id));
+  (incoming.overallRecords || []).forEach(r => { if (overallIds.has(r.id)) skipped++; else { overallRecords.push(r); overallIds.add(r.id); added++; } });
+  return { state: { ...current, modules, records, overallRecords, activeModuleId: current.activeModuleId || incoming.activeModuleId, importedMapping: current.importedMapping.length ? current.importedMapping : incoming.importedMapping, mappingMeta: current.importedMapping.length ? current.mappingMeta : incoming.mappingMeta }, added, skipped };
 }
 
 const STATUSES = new Set(['open', 'repaired', 'closed', 'void']);
@@ -179,6 +182,19 @@ function validateState(data) {
     nullableNumber(record.expected, '计划线数', 100, true);
     nullableNumber(record.actual, '实际线数', 100, true);
     nullableNumber(record.force, '拉力数值', 10000);
+    if (Object.hasOwn(record, 'pullTests')) {
+      if (!Array.isArray(record.pullTests) || record.pullTests.length > 30) invalid('逐根拉力测试列表');
+      const tested = new Set();
+      for (const test of record.pullTests) {
+        if (!isObject(test)) invalid('逐根拉力测试');
+        requireWires([test.wire], '拉力测试 wire', 1);
+        const key = wireKey(test.wire);
+        if (tested.has(key)) invalid('拉力测试 wire（编号重复）');
+        tested.add(key);
+        nullableNumber(test.force, '单根 wire 拉力值', 10000);
+        requireString(test.endpoint, '拉力测试端点', { max: 120 });
+      }
+    }
     requireDate(record.createdAt, '异常创建时间');
     requireDate(record.updatedAt, '异常更新时间');
     if (!Array.isArray(record.photos) || record.photos.length > 3) invalid('记录照片列表');
@@ -193,6 +209,25 @@ function validateState(data) {
     if (record.history.at(-1).status !== record.status) invalid('当前状态与处理历史的对应');
     requireMappingSnapshot(record.mapping, record);
     requireOgpSnapshot(record);
+  }
+  if (data.overallRecords !== undefined) {
+    if (!Array.isArray(data.overallRecords)) invalid('总体 bonding 记录列表');
+    const overallIds = new Set();
+    for (const record of data.overallRecords) {
+      if (!isObject(record)) invalid('总体 bonding 记录');
+      requireString(record.id, '总体记录 ID', { max: 128 });
+      if (overallIds.has(record.id)) invalid('总体记录 ID（重复）');
+      overallIds.add(record.id);
+      requireString(record.moduleId, '总体记录模块编号', { max: 80 });
+      if (!modules.has(record.moduleId)) invalid('总体记录所属模块（不存在）');
+      if (!['all','front','back'].includes(record.side)) invalid('总体记录正反面');
+      if (!['good','attention','issue'].includes(record.condition)) invalid('总体 bonding 情况');
+      requireString(record.operator, '总体记录人', { max: 60 });
+      requireString(record.note, '总体记录备注', { empty: true, max: 4000 });
+      requireDate(record.createdAt, '总体记录时间');
+      if (!Array.isArray(record.photos) || record.photos.length > 6) invalid('总体记录照片列表');
+      record.photos.forEach(requirePhoto);
+    }
   }
   if (data.activeModuleId !== null && (typeof data.activeModuleId !== 'string' || !modules.has(data.activeModuleId))) invalid('当前模块');
   for (const entry of data.importedMapping) {
