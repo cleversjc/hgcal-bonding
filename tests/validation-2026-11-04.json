@@ -1,0 +1,115 @@
+{
+  "verifiedBaseCommit": "76f1235c029cf1192c028772268776b672993b88",
+  "verifiedBasePagesDeployment": 7544680264,
+  "verifiedBasePagesRun": 41821065960,
+  "stableV1Tree": "adf64a632c982da2c3083139e8a0c8f2df220761",
+  "shellVersion": "2026-11-04-ogp-v1",
+  "environment": "Windows, headless Microsoft Edge, isolated Playwright contexts",
+  "modelSuite": "passed",
+  "browserSuite": {
+    "passed": true,
+    "checks": [
+      {
+        "name": "Independent preprocessor: 121 exact original image byte hashes"
+      },
+      {
+        "name": "Per-wire pull tests, mapping snapshots and anomaly photo"
+      },
+      {
+        "name": "Overall photo, void audit and backside six-position workflow"
+      },
+      {
+        "name": "PDF preview and explicit confirmation do not save early"
+      },
+      {
+        "name": "All six PDF pages, four module IDs, 121 labels/confidences and exactly one first Wire",
+        "detail": {
+          "320MLF3WDIH0630": 10,
+          "320MLF3WDIH0631": 44,
+          "320MLF3WDIH0632": 5,
+          "320MLF3WDIH0633": 62
+        }
+      },
+      {
+        "name": "All 121 native crops match independent originals and preserve red annotations",
+        "detail": {
+          "count": 121,
+          "maxRmse": 2.589031643767715,
+          "minRedRatio": 0.9769267939115729,
+          "maxRedRatio": 1.08552091878589,
+          "outliers": [
+            {
+              "page": 2,
+              "index": 16,
+              "rmse": 1.8801532194138386,
+              "redRatio": 1.0688265385211595
+            },
+            {
+              "page": 4,
+              "index": 1,
+              "rmse": 2.043452131708334,
+              "redRatio": 1.062361350751787
+            },
+            {
+              "page": 4,
+              "index": 2,
+              "rmse": 1.760041565067112,
+              "redRatio": 1.0565500406834825
+            },
+            {
+              "page": 5,
+              "index": 3,
+              "rmse": 1.7812128407430083,
+              "redRatio": 1.08552091878589
+            },
+            {
+              "page": 5,
+              "index": 9,
+              "rmse": 2.0909057692215325,
+              "redRatio": 1.0504765740367834
+            }
+          ]
+        }
+      },
+      {
+        "name": "Manual correction validation, original/edited audit, duplicates and IndexedDB reload"
+      },
+      {
+        "name": "Offline reload, image zoom, reusable PDF parsing, repeated rows and complete local worker cache",
+        "detail": {
+          "rows": 242,
+          "images": 121,
+          "cachedFiles": 22
+        }
+      },
+      {
+        "name": "CSV image IDs / escaped notes and full JSON containing every image byte",
+        "detail": {
+          "backupBytes": 70832176
+        }
+      },
+      {
+        "name": "Desktop/mobile fit and separate stable-v1 IndexedDB"
+      },
+      {
+        "name": "Full UI backup restore on empty device and legacy merge preserve all records / images"
+      },
+      {
+        "name": "Reusable preprocessing JSON import preserves original JPEG bytes",
+        "detail": {
+          "bytes": 9323219
+        }
+      }
+    ],
+    "pageErrors": []
+  },
+  "edgeCases": {
+    "passed": true,
+    "cancelWithoutSave": true,
+    "invalidImportWithoutSave": true,
+    "staleWindowRejected": true,
+    "otherWindowRecordPreserved": true,
+    "mobileNavigationVisible": true,
+    "pageErrors": []
+  }
+}

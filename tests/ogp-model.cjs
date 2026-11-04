@@ -1,0 +1,67 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+(async () => {
+  const ogp = await import('../ogp.js');
+  const storage = await import('../storage.js');
+  const { BUILTIN_MAPPING, BACKSIDE_ORDER } = await import('../domain-data.js');
+  const { parseCaptionItems, pairCaptions } = await import('../ogp-pdf.js');
+  const now = '2026-11-04T12:00:00.000Z';
+  const image = {name:'evidence.png',width:1,height:1,data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII='};
+  const signals = BUILTIN_MAPPING.filter(e=>e.side==='front'&&/^C\d+$/.test(e.target));
+  assert.equal(signals.length,198);
+  assert.deepEqual(BACKSIDE_ORDER,['H','G','L','K','J','I']);
+  const manifest = {app:'HGCAL OGP Import',schemaVersion:1,source:{name:'test.pdf',sha256:'a'.repeat(64),pageCount:1,parser:'test'},pages:[{page:1,moduleId:'320MLF3WDIH0630',count:198}],detections:signals.map((e,i)=>({moduleId:'320MLF3WDIH0630',cell:e.target,confidence:0.52,page:1,index:i+1,caption:'cell '+e.target.slice(1)+' conf 0.52',image}))};
+  const draft = ogp.prepareOgpImport(manifest,'QA',now);
+  assert.equal(draft.rows.length,198);
+  for (const row of draft.rows) {
+    const expected = signals.find(e=>e.target===row.reportedCell);
+    assert.equal(row.wire,String(Number(expected.wires[0])));
+    assert.equal(typeof row.wire,'string');
+    assert.equal(row.mapping.wires.length,3);
+  }
+  for (const [cell,wire] of Object.entries({C111:'211',C118:'322',C57:'367',C185:'505',C81:'352',C70:'97',C61:'25',C142:'85'})) assert.equal(draft.rows.find(r=>r.reportedCell===cell).wire,wire);
+  const original = draft.rows.find(r=>r.reportedCell==='C111');
+  const edited = ogp.editOgpRow(original,{wire:'W25',operator:'QA2',status:'normal',note:'看图确认',reason:'现场核对'},'2026-11-04T12:01:00.000Z');
+  assert.equal(original.wire,'211'); assert.equal(edited.wire,'25'); assert.equal(edited.originalWire,'211');
+  assert.equal(edited.history.length,2); assert.equal(edited.history[1].operator,'QA2'); assert.equal(edited.history[1].reason,'现场核对');
+  for (const wire of ['0','595','-1','2.5','not a wire']) assert.throws(()=>ogp.editOgpRow(original,{wire,operator:'QA',status:'pending',note:'',reason:'test'}));
+  assert.throws(()=>ogp.editOgpRow(original,{wire:'25',operator:'QA',status:'pending',note:'',reason:''}),/原因/);
+  const state=ogp.appendOgpImport(storage.emptyState(),draft);
+  assert.equal(state.ogpImages.length,1,'identical bytes share an image, without merging detections');
+  assert.equal(state.ogpRows.length,198);
+  const backup=JSON.stringify(storage.makeBackup(state));
+  assert.deepEqual(storage.readBackup(backup),state);
+  const second=ogp.appendOgpImport(state,ogp.prepareOgpImport(manifest,'QA',now));
+  assert.equal(second.ogpRows.length,396); assert.equal(second.ogpImports.length,2); assert.equal(second.ogpImages.length,1);
+  assert.equal(ogp.duplicateOgpWires(second.ogpRows).size,396);
+  const merged=storage.mergeBackup(state,second);
+  assert.equal(merged.state.ogpRows.length,396); assert.equal(merged.state.ogpImages.length,1);
+  assert.equal(merged.added,198); assert.equal(merged.skipped,198);
+  assert.equal(storage.mergeBackup(merged.state,second).added,0);
+  assert.throws(()=>ogp.appendOgpImport(state,draft),/已经保存/);
+  const legacy=storage.emptyState(); delete legacy.ogpRows; delete legacy.ogpImages; delete legacy.ogpImports; delete legacy.overallRecords;
+  assert.deepEqual(storage.readBackup(JSON.stringify(storage.makeBackup(legacy))),legacy);
+  assert.equal(storage.mergeBackup(state,legacy).state.ogpRows.length,198);
+  for (const mutate of [s=>s.ogpImages.pop(),s=>s.ogpRows[0].confidence=2,s=>s.ogpRows[0].wire='2',s=>s.ogpImports[0].pages[0].moduleId='missing',s=>s.ogpRows[0].sourceIndex=s.ogpRows[1].sourceIndex,s=>s.ogpRows[0].imageId='missing']) {
+    const broken=structuredClone(state); mutate(broken);
+    assert.throws(()=>storage.readBackup(JSON.stringify(storage.makeBackup(broken))));
+  }
+  const duplicateManifest=structuredClone(manifest); duplicateManifest.detections.push({...duplicateManifest.detections[0],index:199}); duplicateManifest.pages[0].count++;
+  const repeatedCell=ogp.prepareOgpImport(duplicateManifest,'QA',now);
+  assert.equal(repeatedCell.rows.length,199); assert.equal(ogp.duplicateOgpWires(repeatedCell.rows).size,2);
+  const csv=ogp.ogpCsv(second.ogpRows,second.ogpImports);
+  assert.ok(csv.startsWith('\uFEFF')); assert.match(csv,/image_id/); assert.match(csv,/yolo_confidence/); assert.match(csv,/true/); assert.match(csv,/audit_history/);
+  assert.equal(csv.split('\r\n').filter(Boolean).length,397);
+  const viewport={convertToViewportPoint:(x,y)=>[x,842-y]};
+  assert.throws(()=>parseCaptionItems([{str:'cell 1 conf 0.3',transform:[1,0,0,1,30,680]}],viewport,null),/标题/);
+  const continued=parseCaptionItems([{str:'cell 1 conf 0.3',transform:[1,0,0,1,30,680]}],viewport,'320MLF3WDIH0631');
+  assert.equal(continued.moduleId,'320MLF3WDIH0631'); assert.equal(continued.inherited,true);
+  assert.throws(()=>pairCaptions(continued.captions,[]),/数量/);
+  assert.throws(()=>pairCaptions(continued.captions,[{x:200,y:50,width:100,height:70}]),/对应/);
+  const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8'),mobile=fs.readFileSync(path.join(__dirname,'../mobile-app.js'),'utf8');
+  assert.equal(sw.match(/SHELL_VERSION = '([^']+)'/)[1],mobile.match(/SHELL_VERSION = '([^']+)'/)[1]);
+  assert.ok(sw.includes('pdf.worker.min.mjs')); assert.ok(sw.includes('ogp-pdf.js')); assert.ok(!/\.skipWaiting\(/.test(sw));
+  console.log('PASS: all 198 mappings, pinned examples, one Wire, repeated detections, duplicate flags, corrections/audit, image dedup, legacy/full backups, merge conflicts, CSV, parser rejection, shell versions, backside order');
+})().catch(error=>{console.error(error);process.exitCode=1;});

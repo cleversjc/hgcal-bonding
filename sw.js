@@ -4,7 +4,7 @@
  * in mobile-app.js. Do not call skipWaiting: open pages/drafts keep their
  * current shell until all pages using the previous worker have closed.
  */
-const SHELL_VERSION = '2026-11-04-pull-overview-v1';
+const SHELL_VERSION = '2026-11-04-ogp-v1';
 const CACHE_PREFIX = 'hgcal-bonding-shell-';
 const CACHE_NAME = CACHE_PREFIX + SHELL_VERSION;
 const SCOPE = new URL('./', self.registration.scope);
@@ -13,7 +13,9 @@ const FILES = [
   'channel-map-data.js', 'mapping.js', 'storage.js', 'styles.css', 'compact.css',
   'backside-map.js', 'backside-map.css', 'manifest.webmanifest',
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png',
-  'assets/cell-reference.png', 'assets/backside-reference.png'
+  'assets/cell-reference.png', 'assets/backside-reference.png',
+  'ogp.js', 'ogp-pdf.js', 'ogp.css',
+  'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs'
 ];
 const URLS = FILES.map(path => new URL(path, SCOPE).href);
 const ALLOWED = new Set(URLS);
@@ -36,7 +38,7 @@ async function validShellResponse(response, url) {
     // Never save a hosting sign-in/error page as the offline application.
     return /id=["']app["']/.test(html) && /src=["']\.\/app\.js["']/.test(html);
   }
-  if (/\.js$/.test(url)) return /(?:java|ecma)script/i.test(contentType);
+  if (/\.(?:mjs|js)$/.test(url)) return /(?:java|ecma)script/i.test(contentType);
   if (/\.css$/.test(url)) return contentType.includes('text/css');
   if (/\.(?:png|svg)$/.test(url)) return contentType.startsWith('image/');
   return !contentType.includes('text/html');

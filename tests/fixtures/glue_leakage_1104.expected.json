@@ -1,0 +1,1264 @@
+{
+  "source": {
+    "name": "glue_leakage_1104.pdf",
+    "sha256": "02298f903fe16666226dff262e0401ae4a44184183750324e14652178003397b",
+    "pageCount": 6,
+    "parser": "hgcal-yolo-grid-v1-pymupdf"
+  },
+  "pages": [
+    {
+      "page": 1,
+      "moduleId": "320MLF3WDIH0630",
+      "count": 10,
+      "inherited": false
+    },
+    {
+      "page": 2,
+      "moduleId": "320MLF3WDIH0631",
+      "count": 35,
+      "inherited": false
+    },
+    {
+      "page": 3,
+      "moduleId": "320MLF3WDIH0631",
+      "count": 9,
+      "inherited": true
+    },
+    {
+      "page": 4,
+      "moduleId": "320MLF3WDIH0632",
+      "count": 5,
+      "inherited": false
+    },
+    {
+      "page": 5,
+      "moduleId": "320MLF3WDIH0633",
+      "count": 35,
+      "inherited": false
+    },
+    {
+      "page": 6,
+      "moduleId": "320MLF3WDIH0633",
+      "count": 27,
+      "inherited": true
+    }
+  ],
+  "moduleCounts": {
+    "320MLF3WDIH0630": 10,
+    "320MLF3WDIH0631": 44,
+    "320MLF3WDIH0632": 5,
+    "320MLF3WDIH0633": 62
+  },
+  "detections": [
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C111",
+      "confidence": 0.52,
+      "page": 1,
+      "index": 1,
+      "caption": "cell 111  conf 0.52",
+      "imageSha256": "8094f013ee8adeb8adb5df3ec5e0bc695bcdc2e144ebaef6552b104f3ff2fefd",
+      "redPixels": 21583
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C118",
+      "confidence": 0.3,
+      "page": 1,
+      "index": 2,
+      "caption": "cell 118  conf 0.30",
+      "imageSha256": "448385f53203f6360c584791e22f3f26bb89b1734633b1ccd29dee0216cb2920",
+      "redPixels": 11805
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C57",
+      "confidence": 0.3,
+      "page": 1,
+      "index": 3,
+      "caption": "cell 57  conf 0.30",
+      "imageSha256": "7dc74db0338d3ee3a20ea2f4f52d17493a0b6d522bdc47918bbf5199f9f8fe3e",
+      "redPixels": 15653
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C185",
+      "confidence": 0.66,
+      "page": 1,
+      "index": 4,
+      "caption": "cell 185  conf 0.66",
+      "imageSha256": "b7d1875401941125375e6a4aecaedbcafe67096ff59c1b200606c5b63ec84620",
+      "redPixels": 20464
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C81",
+      "confidence": 0.72,
+      "page": 1,
+      "index": 5,
+      "caption": "cell 81  conf 0.72",
+      "imageSha256": "54ea63c1749ed53ff8c4daf56f7f72def1d9d9d2250a907169ffe6587bce0daf",
+      "redPixels": 14577
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C70",
+      "confidence": 0.48,
+      "page": 1,
+      "index": 6,
+      "caption": "cell 70  conf 0.48",
+      "imageSha256": "295639c655d73c03fc7c25df0380adcef9b924d67ebf4c35414f9d158eece988",
+      "redPixels": 7116
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C61",
+      "confidence": 0.55,
+      "page": 1,
+      "index": 7,
+      "caption": "cell 61  conf 0.55",
+      "imageSha256": "6de5c6c334fbc82c7da780b24da3ab3e78947dc053308e5a55d4aafd5c417e3b",
+      "redPixels": 8652
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C142",
+      "confidence": 0.43,
+      "page": 1,
+      "index": 8,
+      "caption": "cell 142  conf 0.43",
+      "imageSha256": "5c030fe2bf9d30a79aa99f87b0089404dbf340d24310dec07c7a0ed738e26537",
+      "redPixels": 10581
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C171",
+      "confidence": 0.78,
+      "page": 1,
+      "index": 9,
+      "caption": "cell 171  conf 0.78",
+      "imageSha256": "1851ae85de44a5cc9f474a5f538497bb264e0ab5c564db30490e09127dc9207c",
+      "redPixels": 23469
+    },
+    {
+      "moduleId": "320MLF3WDIH0630",
+      "cell": "C190",
+      "confidence": 0.6,
+      "page": 1,
+      "index": 10,
+      "caption": "cell 190  conf 0.60",
+      "imageSha256": "c85eaf44f55646adf9d6c0882742d9595743721f67887bd8eae8ab8177f78b10",
+      "redPixels": 15349
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C154",
+      "confidence": 0.66,
+      "page": 2,
+      "index": 1,
+      "caption": "cell 154  conf 0.66",
+      "imageSha256": "5c1e8dce8eacae41ee2cae70e74f100fe1d267b4c0f4bf7e24f0921792b25421",
+      "redPixels": 5944
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C177",
+      "confidence": 0.76,
+      "page": 2,
+      "index": 2,
+      "caption": "cell 177  conf 0.76",
+      "imageSha256": "95c1530b7d267409da567df235f430a4fc180fe2f197e8525ca49c27e54ca082",
+      "redPixels": 11769
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C27",
+      "confidence": 0.62,
+      "page": 2,
+      "index": 3,
+      "caption": "cell 27  conf 0.62",
+      "imageSha256": "f2cf082b541558a2a39914f4447d36bd6666008fbdc0cb9ef5f5cfc3f3cfe5f2",
+      "redPixels": 10501
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C51",
+      "confidence": 0.39,
+      "page": 2,
+      "index": 4,
+      "caption": "cell 51  conf 0.39",
+      "imageSha256": "ca873eb882f27cfe28a0e7b0163e0e8ec59d253fdbaee02e4908085091a1255f",
+      "redPixels": 9080
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C77",
+      "confidence": 0.45,
+      "page": 2,
+      "index": 5,
+      "caption": "cell 77  conf 0.45",
+      "imageSha256": "10020a3752508e0aa78a26e278ff5e4a7e9a70092b343265298a15300a25e134",
+      "redPixels": 15131
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C93",
+      "confidence": 0.38,
+      "page": 2,
+      "index": 6,
+      "caption": "cell 93  conf 0.38",
+      "imageSha256": "72f1a6c15edb038263639cfc5f26a33b8666b43edde4315944895c5789e55119",
+      "redPixels": 6884
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C80",
+      "confidence": 0.74,
+      "page": 2,
+      "index": 7,
+      "caption": "cell 80  conf 0.74",
+      "imageSha256": "d1e57fcf6d59c90b32206acd5d4bcd0776c1b1337b6a7092e4fadc4ed9ec124c",
+      "redPixels": 6345
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C111",
+      "confidence": 0.75,
+      "page": 2,
+      "index": 8,
+      "caption": "cell 111  conf 0.75",
+      "imageSha256": "f1e23865d98ebb431bf09c8eece4750c90c3d5051a21fbd902004fe29a6a0f51",
+      "redPixels": 18926
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C139",
+      "confidence": 0.79,
+      "page": 2,
+      "index": 9,
+      "caption": "cell 139  conf 0.79",
+      "imageSha256": "02186b2026f36fee2fdf2d9b19c4135b1c03f0f0d8c33f1120f9da6191d524aa",
+      "redPixels": 10155
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C168",
+      "confidence": 0.7,
+      "page": 2,
+      "index": 10,
+      "caption": "cell 168  conf 0.70",
+      "imageSha256": "2b48bf60eb3714403343deaae6a191ca935c5245ac38e001d05b9201e0562093",
+      "redPixels": 7226
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C153",
+      "confidence": 0.73,
+      "page": 2,
+      "index": 11,
+      "caption": "cell 153  conf 0.73",
+      "imageSha256": "4f6c744ad90baaaa2f491f1813e1d99c0852b33b09ee57af653a55c490d2db13",
+      "redPixels": 17578
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C179",
+      "confidence": 0.8,
+      "page": 2,
+      "index": 12,
+      "caption": "cell 179  conf 0.80",
+      "imageSha256": "d8d5b57522541b1abdfe45e5466335662bcd7db847951fd19ff96f68669419e9",
+      "redPixels": 9097
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C189",
+      "confidence": 0.75,
+      "page": 2,
+      "index": 13,
+      "caption": "cell 189  conf 0.75",
+      "imageSha256": "ab2d6b2315556a2914d870509f007029847a778e7f6f26f62b552e58b1553312",
+      "redPixels": 6693
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C150",
+      "confidence": 0.61,
+      "page": 2,
+      "index": 14,
+      "caption": "cell 150  conf 0.61",
+      "imageSha256": "c3e4716adead4f6846eaa64bcecaee94edf22b4359c228c14a530173a7c51cb6",
+      "redPixels": 8694
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C149",
+      "confidence": 0.77,
+      "page": 2,
+      "index": 15,
+      "caption": "cell 149  conf 0.77",
+      "imageSha256": "6633ddbd79cc8c4997bdf8028f935f0bc20a7f80cf1a8d9ce23dbcf3e0575c55",
+      "redPixels": 8284
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C174",
+      "confidence": 0.73,
+      "page": 2,
+      "index": 16,
+      "caption": "cell 174  conf 0.73",
+      "imageSha256": "f4a64f6b083dd45d47250c89145b4b04d01d703e9d1fc78aa5fb2b402c11c60a",
+      "redPixels": 6451
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C161",
+      "confidence": 0.75,
+      "page": 2,
+      "index": 17,
+      "caption": "cell 161  conf 0.75",
+      "imageSha256": "9e2749a7fb215527e39e7d0465795ca647ec0d077ddd1ea92146e0ba9a5a6f8d",
+      "redPixels": 19435
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C184",
+      "confidence": 0.45,
+      "page": 2,
+      "index": 18,
+      "caption": "cell 184  conf 0.45",
+      "imageSha256": "e8028ca59b35af372ad635709822ad916c5d6872e70522be949efc5623d44d47",
+      "redPixels": 9623
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C186",
+      "confidence": 0.79,
+      "page": 2,
+      "index": 19,
+      "caption": "cell 186  conf 0.79",
+      "imageSha256": "1c61a257f1365fd927baeeea7c993af8238495590869b410b19fa47ca0789bd2",
+      "redPixels": 10094
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C198",
+      "confidence": 0.76,
+      "page": 2,
+      "index": 20,
+      "caption": "cell 198  conf 0.76",
+      "imageSha256": "80e501222020d40c5bfb54bbc45d08846733953eab5602108acc89a49bf3265b",
+      "redPixels": 10541
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C133",
+      "confidence": 0.35,
+      "page": 2,
+      "index": 21,
+      "caption": "cell 133  conf 0.35",
+      "imageSha256": "3c41e0daa90b5b1e75e9a4c6863621aa3abd5aedd2854cacb8e3fe55f7de722b",
+      "redPixels": 20157
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C120",
+      "confidence": 0.74,
+      "page": 2,
+      "index": 22,
+      "caption": "cell 120  conf 0.74",
+      "imageSha256": "6d27acd6c3bca46d0619948e1733086cdf82be615b62404f5426c64b022b6115",
+      "redPixels": 9032
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C112",
+      "confidence": 0.48,
+      "page": 2,
+      "index": 23,
+      "caption": "cell 112  conf 0.48",
+      "imageSha256": "41503a2c6fecd9c545c18aa89762aa8b51b82e895aee5572fdc064f89f4d7c09",
+      "redPixels": 10367
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C99",
+      "confidence": 0.51,
+      "page": 2,
+      "index": 24,
+      "caption": "cell 99  conf 0.51",
+      "imageSha256": "4bb95a0d7155290e1cda807901e9064dc4a9518d674bf6259d0b9c20303bc270",
+      "redPixels": 10846
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C118",
+      "confidence": 0.63,
+      "page": 2,
+      "index": 25,
+      "caption": "cell 118  conf 0.63",
+      "imageSha256": "868a8593682589e84327aa5d80645eb8b78cf33ecde480e3235cac8e5ef256c7",
+      "redPixels": 6691
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C55",
+      "confidence": 0.25,
+      "page": 2,
+      "index": 26,
+      "caption": "cell 55  conf 0.25",
+      "imageSha256": "ffe3bb86a18108df8ba464ddf8c18fbed9cc53cd730e70ecd7d8669b866ab6a9",
+      "redPixels": 18167
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C47",
+      "confidence": 0.63,
+      "page": 2,
+      "index": 27,
+      "caption": "cell 47  conf 0.63",
+      "imageSha256": "6c0c29588224d7bd0927302cd752387991f3eaf97da2de5837367e628432cb0f",
+      "redPixels": 15487
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C124",
+      "confidence": 0.5,
+      "page": 2,
+      "index": 28,
+      "caption": "cell 124  conf 0.50",
+      "imageSha256": "cce4d36d428506ec7b6d28273cb5b9cad42185d2ecf3032b976c2ec496588983",
+      "redPixels": 16407
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C122",
+      "confidence": 0.7,
+      "page": 2,
+      "index": 29,
+      "caption": "cell 122  conf 0.70",
+      "imageSha256": "afcfc5f8ec20d5d74748d95c14e862caec4de73d317250118bc30d25c7a9ad58",
+      "redPixels": 11950
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C185",
+      "confidence": 0.35,
+      "page": 2,
+      "index": 30,
+      "caption": "cell 185  conf 0.35",
+      "imageSha256": "1a83b06ad415badbe068bced483619f8ebafcff29c9c34769d41c00d40ba1e87",
+      "redPixels": 15005
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C13",
+      "confidence": 0.75,
+      "page": 2,
+      "index": 31,
+      "caption": "cell 13  conf 0.75",
+      "imageSha256": "34d4d6814f47cbb1f1f02471bb6d0a3868f9889266bc972355b661deaecfa4f0",
+      "redPixels": 10283
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C5",
+      "confidence": 0.47,
+      "page": 2,
+      "index": 32,
+      "caption": "cell 5  conf 0.47",
+      "imageSha256": "63bf962b9945d4a91b205cae27196fae5cc6a52cdc17c45ef0470bd123ad72ee",
+      "redPixels": 23113
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C25",
+      "confidence": 0.45,
+      "page": 2,
+      "index": 33,
+      "caption": "cell 25  conf 0.45",
+      "imageSha256": "968729eb9d2ca1098a2920175744271e8b44d8fa1bcfe5acac84d01941b1a499",
+      "redPixels": 9191
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C70",
+      "confidence": 0.33,
+      "page": 2,
+      "index": 34,
+      "caption": "cell 70  conf 0.33",
+      "imageSha256": "d05c611c7de70c3384879e8d72c6b1e477022ea5914a6abbf71045b894f68091",
+      "redPixels": 5611
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C61",
+      "confidence": 0.72,
+      "page": 2,
+      "index": 35,
+      "caption": "cell 61  conf 0.72",
+      "imageSha256": "6987704c173220b26861678b2ed88f7fcb68cea2d9384b9c17800b9a6230e6b3",
+      "redPixels": 11125
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C142",
+      "confidence": 0.72,
+      "page": 3,
+      "index": 1,
+      "caption": "cell 142  conf 0.72",
+      "imageSha256": "f00052af30a76b679c1c5f89a08c4f66ec238c2e8becf81d2754e4da4743a794",
+      "redPixels": 10392
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C180",
+      "confidence": 0.61,
+      "page": 3,
+      "index": 2,
+      "caption": "cell 180  conf 0.61",
+      "imageSha256": "2cc5a078c3c3821cbb731fe6922586ab03057c45f078f0748c68af8465cf293e",
+      "redPixels": 20886
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C136",
+      "confidence": 0.6,
+      "page": 3,
+      "index": 3,
+      "caption": "cell 136  conf 0.60",
+      "imageSha256": "a16947d63c956314f0773d5686b1e449a76b6380efbda7e114b5129817d154e7",
+      "redPixels": 11107
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C94",
+      "confidence": 0.75,
+      "page": 3,
+      "index": 4,
+      "caption": "cell 94  conf 0.75",
+      "imageSha256": "789b2f9fa22a7829eebcef2395514030acff1bed33a86ed3f214e8b89de61bfb",
+      "redPixels": 10285
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C138",
+      "confidence": 0.7,
+      "page": 3,
+      "index": 5,
+      "caption": "cell 138  conf 0.70",
+      "imageSha256": "c07a9dff93f210698a75e8c51b6d3a49dd3a9ab5c4c0223da9ba63562b8a64c1",
+      "redPixels": 20950
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C163",
+      "confidence": 0.76,
+      "page": 3,
+      "index": 6,
+      "caption": "cell 163  conf 0.76",
+      "imageSha256": "c27f6f7093835d8eab92f651166de0179ef168f74d36753357887eb24722c364",
+      "redPixels": 9786
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C192",
+      "confidence": 0.52,
+      "page": 3,
+      "index": 7,
+      "caption": "cell 192  conf 0.52",
+      "imageSha256": "2953c166b4af576c5900ec8d4995db5b199c517c8c81a2fd791719a83affd0b5",
+      "redPixels": 11281
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C126",
+      "confidence": 0.47,
+      "page": 3,
+      "index": 8,
+      "caption": "cell 126  conf 0.47",
+      "imageSha256": "759e6aff7eb5ab4a6be9a7a800eb1b357906471cf50c233010c9461b58a33a0a",
+      "redPixels": 17569
+    },
+    {
+      "moduleId": "320MLF3WDIH0631",
+      "cell": "C176",
+      "confidence": 0.69,
+      "page": 3,
+      "index": 9,
+      "caption": "cell 176  conf 0.69",
+      "imageSha256": "fd8fc792668aef346bfa294eea43cc229f4c1ed008b15da60ec1a6df8a43d17f",
+      "redPixels": 10305
+    },
+    {
+      "moduleId": "320MLF3WDIH0632",
+      "cell": "C74",
+      "confidence": 0.31,
+      "page": 4,
+      "index": 1,
+      "caption": "cell 74  conf 0.31",
+      "imageSha256": "6506fc09d2fdee8c4c5dbf08828aec8f4387a8ff145185104b1f11b3e95c2202",
+      "redPixels": 8114
+    },
+    {
+      "moduleId": "320MLF3WDIH0632",
+      "cell": "C93",
+      "confidence": 0.35,
+      "page": 4,
+      "index": 2,
+      "caption": "cell 93  conf 0.35",
+      "imageSha256": "2a60eb4e8359127af62f268c2055e34a08fed3c7cc1f46d2e0a3c19b959b827f",
+      "redPixels": 7374
+    },
+    {
+      "moduleId": "320MLF3WDIH0632",
+      "cell": "C122",
+      "confidence": 0.43,
+      "page": 4,
+      "index": 3,
+      "caption": "cell 122  conf 0.43",
+      "imageSha256": "f1f484116b1cbb23494dbd2f8538b2b18bc8d07357bb32012c15800e68494137",
+      "redPixels": 8658
+    },
+    {
+      "moduleId": "320MLF3WDIH0632",
+      "cell": "C13",
+      "confidence": 0.35,
+      "page": 4,
+      "index": 4,
+      "caption": "cell 13  conf 0.35",
+      "imageSha256": "d6396dea86777c3b612fa1e04f70359ed15f97ab21cf6271d4cb5bc7e8d8b905",
+      "redPixels": 12093
+    },
+    {
+      "moduleId": "320MLF3WDIH0632",
+      "cell": "C176",
+      "confidence": 0.51,
+      "page": 4,
+      "index": 5,
+      "caption": "cell 176  conf 0.51",
+      "imageSha256": "fc064e6a1212301490cb67fc0f7eff97e86b1792ab41e9f8e8d6f579b5c24c7f",
+      "redPixels": 9444
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C154",
+      "confidence": 0.53,
+      "page": 5,
+      "index": 1,
+      "caption": "cell 154  conf 0.53",
+      "imageSha256": "c58f2fa230e779f9c6cabd8270ecffac9716afea60b5c23e485a1164520e31fc",
+      "redPixels": 9121
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C177",
+      "confidence": 0.64,
+      "page": 5,
+      "index": 2,
+      "caption": "cell 177  conf 0.64",
+      "imageSha256": "b2fac477935b242682bdb92778fcb017cc68bfc8ac11df57f1c0b81d20acd576",
+      "redPixels": 9797
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C3",
+      "confidence": 0.57,
+      "page": 5,
+      "index": 3,
+      "caption": "cell 3  conf 0.57",
+      "imageSha256": "4c14383bc3b09f53af808bbb4c55f0acf29d86f5986b9aa5cdc6b39a8d76f9ee",
+      "redPixels": 4876
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C4",
+      "confidence": 0.54,
+      "page": 5,
+      "index": 4,
+      "caption": "cell 4  conf 0.54",
+      "imageSha256": "2a49ebcdd029e3b84812099876a294146f1079003fe1909186cde11e2ae06726",
+      "redPixels": 17474
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C7",
+      "confidence": 0.7,
+      "page": 5,
+      "index": 5,
+      "caption": "cell 7  conf 0.70",
+      "imageSha256": "c48aa6de7e44b2af96ce2213692f3ae75f039d068a8776d13b9cc002eb0366a1",
+      "redPixels": 15659
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C27",
+      "confidence": 0.54,
+      "page": 5,
+      "index": 6,
+      "caption": "cell 27  conf 0.54",
+      "imageSha256": "a4625a59a936a8ae6cd030ee1f5ee250faf2112152fc57e16d21b116226636a0",
+      "redPixels": 16556
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C51",
+      "confidence": 0.57,
+      "page": 5,
+      "index": 7,
+      "caption": "cell 51  conf 0.57",
+      "imageSha256": "27fb74dce8a498f92918c7ea7facffc53deb681e8f01ebfba50940cf9d6191d3",
+      "redPixels": 8695
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C63",
+      "confidence": 0.73,
+      "page": 5,
+      "index": 8,
+      "caption": "cell 63  conf 0.73",
+      "imageSha256": "d3192080f58a7689840282decc23f26006bc522e5a2a6dbe6dfc8b276073c7f3",
+      "redPixels": 6166
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C74",
+      "confidence": 0.32,
+      "page": 5,
+      "index": 9,
+      "caption": "cell 74  conf 0.32",
+      "imageSha256": "80fba46c5dcb7f7d34c2eb0210bff19fa20dfaceefc70c8b87ca5013d4fbc529",
+      "redPixels": 7449
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C104",
+      "confidence": 0.45,
+      "page": 5,
+      "index": 10,
+      "caption": "cell 104  conf 0.45",
+      "imageSha256": "f6d554d73af9d0c4415c7c7d4c6ddddf6eca9ed57ecc31359a42f29ddf9ae55e",
+      "redPixels": 8867
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C105",
+      "confidence": 0.46,
+      "page": 5,
+      "index": 11,
+      "caption": "cell 105  conf 0.46",
+      "imageSha256": "f4edb9d8a774ec6135d396d64553c754cdcc874d9652c69862645935d30aa694",
+      "redPixels": 6500
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C91",
+      "confidence": 0.51,
+      "page": 5,
+      "index": 12,
+      "caption": "cell 91  conf 0.51",
+      "imageSha256": "c2debb89c183f238f7656e9bf92573032a024ec813e743b197b5ec76ca017ca1",
+      "redPixels": 18202
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C80",
+      "confidence": 0.47,
+      "page": 5,
+      "index": 13,
+      "caption": "cell 80  conf 0.47",
+      "imageSha256": "b9cbad6eac816a18fd3a6e6b835a4f591fec5f04278161e9058e6f2b0730ed2a",
+      "redPixels": 6607
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C111",
+      "confidence": 0.69,
+      "page": 5,
+      "index": 14,
+      "caption": "cell 111  conf 0.69",
+      "imageSha256": "f79128ba9f58a9295fdb12c6b17bfde80e0aa346825e491feb3fbb5a4ea5d2c8",
+      "redPixels": 21367
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C179",
+      "confidence": 0.38,
+      "page": 5,
+      "index": 15,
+      "caption": "cell 179  conf 0.38",
+      "imageSha256": "26dfa83de37deeb50334a3b1453255942f498171da1de96cadee9e8c88d5aae7",
+      "redPixels": 7781
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C149",
+      "confidence": 0.36,
+      "page": 5,
+      "index": 16,
+      "caption": "cell 149  conf 0.36",
+      "imageSha256": "8485398da5ba262f54b1d1158294aa7d52e2f2b457423856df1b54353162475b",
+      "redPixels": 7588
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C184",
+      "confidence": 0.37,
+      "page": 5,
+      "index": 17,
+      "caption": "cell 184  conf 0.37",
+      "imageSha256": "7af6dcc99795e35387c24460ff500a9de9eb549b373e62bc528ce8b1b226ece4",
+      "redPixels": 11193
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C186",
+      "confidence": 0.52,
+      "page": 5,
+      "index": 18,
+      "caption": "cell 186  conf 0.52",
+      "imageSha256": "661da884920166b5e98dcb670d228b885baaf0203ae51d921a5b20c82f90c070",
+      "redPixels": 9883
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C198",
+      "confidence": 0.53,
+      "page": 5,
+      "index": 19,
+      "caption": "cell 198  conf 0.53",
+      "imageSha256": "3afd89d93a11ba3d8e2b068e63d45d88f4fbddd9354bfcb011646b402af5c9b8",
+      "redPixels": 11654
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C132",
+      "confidence": 0.65,
+      "page": 5,
+      "index": 20,
+      "caption": "cell 132  conf 0.65",
+      "imageSha256": "f6d827773cabb23fb9fadfba0c81e3403831954497d0b77d099c0052207d4217",
+      "redPixels": 13789
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C133",
+      "confidence": 0.45,
+      "page": 5,
+      "index": 21,
+      "caption": "cell 133  conf 0.45",
+      "imageSha256": "103c2adfa5a5f0227015c0c68fd648c50d02d8fc6b7f3c5ab600ea85163ca755",
+      "redPixels": 21120
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C112",
+      "confidence": 0.69,
+      "page": 5,
+      "index": 22,
+      "caption": "cell 112  conf 0.69",
+      "imageSha256": "bb060e407ef84b7bb185fdbde366145717be76c74c614807a0180f9022eb3e9a",
+      "redPixels": 10721
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C99",
+      "confidence": 0.46,
+      "page": 5,
+      "index": 23,
+      "caption": "cell 99  conf 0.46",
+      "imageSha256": "c370381c86d8cdda2ff741c642ea2b94cd44bb8b89b3f4cd43f64723d08b0024",
+      "redPixels": 10767
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C116",
+      "confidence": 0.63,
+      "page": 5,
+      "index": 24,
+      "caption": "cell 116  conf 0.63",
+      "imageSha256": "eed0b551896b80432e2855938b2c30b0a4244a324668151e07d8bc4fb56cbb60",
+      "redPixels": 8712
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C102",
+      "confidence": 0.46,
+      "page": 5,
+      "index": 25,
+      "caption": "cell 102  conf 0.46",
+      "imageSha256": "c43c4528ecfe25ba162bfc736554d240e3be62c1cbc253f526112bff3771a437",
+      "redPixels": 9707
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C86",
+      "confidence": 0.59,
+      "page": 5,
+      "index": 26,
+      "caption": "cell 86  conf 0.59",
+      "imageSha256": "fb5eed5d70efc8839e2def63492f014a61254d6c4159308a2242057f8c007df8",
+      "redPixels": 14254
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C118",
+      "confidence": 0.56,
+      "page": 5,
+      "index": 27,
+      "caption": "cell 118  conf 0.56",
+      "imageSha256": "6a36f3736cd1f344aac2f95c6aab61d425e5acb3b45a7e6ea56ea0b0e8ce18bc",
+      "redPixels": 9296
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C85",
+      "confidence": 0.36,
+      "page": 5,
+      "index": 28,
+      "caption": "cell 85  conf 0.36",
+      "imageSha256": "a48573e22ff686bdeece96c2050921d754af9b894afdffebbc9c0ba77274601c",
+      "redPixels": 7222
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C87",
+      "confidence": 0.48,
+      "page": 5,
+      "index": 29,
+      "caption": "cell 87  conf 0.48",
+      "imageSha256": "2e964e831c125986cb1c80b85632aa9e502edfb6369ef8c6db71e76fc19cd186",
+      "redPixels": 7730
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C41",
+      "confidence": 0.66,
+      "page": 5,
+      "index": 30,
+      "caption": "cell 41  conf 0.66",
+      "imageSha256": "3029eac955a501857cfce61d5337e9cb9e8e607f9e8fe4210fb3399ebce7ca78",
+      "redPixels": 9069
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C52",
+      "confidence": 0.26,
+      "page": 5,
+      "index": 31,
+      "caption": "cell 52  conf 0.26",
+      "imageSha256": "447d2155f96ad7ae33c71ebf9c477894ec55499ce648009e03b172c88a1de752",
+      "redPixels": 10899
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C67",
+      "confidence": 0.69,
+      "page": 5,
+      "index": 32,
+      "caption": "cell 67  conf 0.69",
+      "imageSha256": "0be09a4ee5b09e8bfd9050ee4fee48dd8eefbf14e6cd76ac55407d501ce338fe",
+      "redPixels": 16506
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C54",
+      "confidence": 0.71,
+      "page": 5,
+      "index": 33,
+      "caption": "cell 54  conf 0.71",
+      "imageSha256": "35ff5b744ec0388d8359bbe7eb4295412a11983d53bc011157963782e6e60842",
+      "redPixels": 7920
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C55",
+      "confidence": 0.65,
+      "page": 5,
+      "index": 34,
+      "caption": "cell 55  conf 0.65",
+      "imageSha256": "4777e4ca916e7ca6bf750b33c01b0b2597de13480992c57f1afcc68024f5268b",
+      "redPixels": 21665
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C47",
+      "confidence": 0.63,
+      "page": 5,
+      "index": 35,
+      "caption": "cell 47  conf 0.63",
+      "imageSha256": "43fe8f07cce8d43e628ab15be056453389c387ff638a357b4757e1e69c345415",
+      "redPixels": 14134
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C8",
+      "confidence": 0.72,
+      "page": 6,
+      "index": 1,
+      "caption": "cell 8  conf 0.72",
+      "imageSha256": "6c0b391d0174444ef051405df96807d17a5e277bd8aef09bbbe153462f038a15",
+      "redPixels": 11694
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C122",
+      "confidence": 0.35,
+      "page": 6,
+      "index": 2,
+      "caption": "cell 122  conf 0.35",
+      "imageSha256": "a8bd3dacdbd7b18ecac6624769571a105b2ec14c1838c91e95841dc3e5a6c0f2",
+      "redPixels": 10681
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C185",
+      "confidence": 0.69,
+      "page": 6,
+      "index": 3,
+      "caption": "cell 185  conf 0.69",
+      "imageSha256": "a170e97b16b88ccdb941e34b185e1cb97dd3b872bb254b18d9914669319e75b4",
+      "redPixels": 16263
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C81",
+      "confidence": 0.68,
+      "page": 6,
+      "index": 4,
+      "caption": "cell 81  conf 0.68",
+      "imageSha256": "8f20e0c18966a90c1a73dff07dc15aef0265f149b395e872e73b996c45879fe0",
+      "redPixels": 10751
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C1",
+      "confidence": 0.63,
+      "page": 6,
+      "index": 5,
+      "caption": "cell 1  conf 0.63",
+      "imageSha256": "37c2e16b853f62fd4aec347bf4fc354c365e2a1371e0f2efe65cc8405ed26e35",
+      "redPixels": 12671
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C2",
+      "confidence": 0.67,
+      "page": 6,
+      "index": 6,
+      "caption": "cell 2  conf 0.67",
+      "imageSha256": "2e9f7cc03131d660c454d9e60af7ba015328eb32611fd3a26a7e66e3a055ae4d",
+      "redPixels": 16197
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C13",
+      "confidence": 0.71,
+      "page": 6,
+      "index": 7,
+      "caption": "cell 13  conf 0.71",
+      "imageSha256": "cc8c63bbfc9d086af8fb3de28bf81eb7009d4b1532ae7cd396657e05b6420f1c",
+      "redPixels": 11098
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C24",
+      "confidence": 0.64,
+      "page": 6,
+      "index": 8,
+      "caption": "cell 24  conf 0.64",
+      "imageSha256": "f519af8f3464805d6a480c106c54d19f7177a710f6d0ad57601c72526d2f717b",
+      "redPixels": 15731
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C34",
+      "confidence": 0.62,
+      "page": 6,
+      "index": 9,
+      "caption": "cell 34  conf 0.62",
+      "imageSha256": "ad88801b48e6ec5db129f3ca7bbe3844e593e7fa8c6b53059886ec5a8727c432",
+      "redPixels": 20696
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C5",
+      "confidence": 0.52,
+      "page": 6,
+      "index": 10,
+      "caption": "cell 5  conf 0.52",
+      "imageSha256": "79319886351e33dcf33738d08d19b099443f2d2b14e6bdb73a2557f05e863a73",
+      "redPixels": 21480
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C25",
+      "confidence": 0.44,
+      "page": 6,
+      "index": 11,
+      "caption": "cell 25  conf 0.44",
+      "imageSha256": "6a0e4c8a21327e207577d75d578727717c3be7015b9600cb964ab15d62faca2b",
+      "redPixels": 11687
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C82",
+      "confidence": 0.57,
+      "page": 6,
+      "index": 12,
+      "caption": "cell 82  conf 0.57",
+      "imageSha256": "5cca68e4caf7e044858fc44a361df2934b89d4fca50a712f45b0a94adcbf65a3",
+      "redPixels": 16513
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C22",
+      "confidence": 0.55,
+      "page": 6,
+      "index": 13,
+      "caption": "cell 22  conf 0.55",
+      "imageSha256": "bae034ee6db26b087b3af2c05f388d1d1653ae172e3b5221a5811af7b0237d01",
+      "redPixels": 21605
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C70",
+      "confidence": 0.57,
+      "page": 6,
+      "index": 14,
+      "caption": "cell 70  conf 0.57",
+      "imageSha256": "d9fddec13383bdebbdc3bcc9c43a144b9c573a6435db1503e718cdd9e709c3d9",
+      "redPixels": 8301
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C83",
+      "confidence": 0.69,
+      "page": 6,
+      "index": 15,
+      "caption": "cell 83  conf 0.69",
+      "imageSha256": "93690d81bb314cb9991f3fd7b943ed6afb9f9710000d36e34d517cca6e9980d5",
+      "redPixels": 19208
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C98",
+      "confidence": 0.49,
+      "page": 6,
+      "index": 16,
+      "caption": "cell 98  conf 0.49",
+      "imageSha256": "b9c62e82bc6ca9f78154d7a8c0415bf0dac8b0ec8ecf9ec316d0537814b6bf99",
+      "redPixels": 10499
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C58",
+      "confidence": 0.63,
+      "page": 6,
+      "index": 17,
+      "caption": "cell 58  conf 0.63",
+      "imageSha256": "5710197742951f86877c6a77e0a0c375144e1d6ca154efdbc9631971fd261e0d",
+      "redPixels": 13915
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C48",
+      "confidence": 0.73,
+      "page": 6,
+      "index": 18,
+      "caption": "cell 48  conf 0.73",
+      "imageSha256": "6d3c53ff36df6402a7289475c8a3d40e0db43d6a0f1d79bcee6cba9dccab3d21",
+      "redPixels": 14001
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C61",
+      "confidence": 0.62,
+      "page": 6,
+      "index": 19,
+      "caption": "cell 61  conf 0.62",
+      "imageSha256": "e8504444e02c3129846b133de43a498ae1b7538428e7d23b621c56e6b2ac3722",
+      "redPixels": 11916
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C142",
+      "confidence": 0.66,
+      "page": 6,
+      "index": 20,
+      "caption": "cell 142  conf 0.66",
+      "imageSha256": "36e8213c9f571905214b765051220e44d48b50fe28a30c36c38275ba75af9413",
+      "redPixels": 10215
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C129",
+      "confidence": 0.59,
+      "page": 6,
+      "index": 21,
+      "caption": "cell 129  conf 0.59",
+      "imageSha256": "380db5496f9fc39594cd4a411b17b206ce16fe3c381fc0aefd40df77f0f7dac5",
+      "redPixels": 15724
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C130",
+      "confidence": 0.73,
+      "page": 6,
+      "index": 22,
+      "caption": "cell 130  conf 0.73",
+      "imageSha256": "8f9384a8366b4b3f2a80b866f6385684f4cba104ff4f9180c44a8463c69bec30",
+      "redPixels": 21601
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C180",
+      "confidence": 0.35,
+      "page": 6,
+      "index": 23,
+      "caption": "cell 180  conf 0.35",
+      "imageSha256": "fa8945addde9b8f4d4ae066e065063ec4e2af41c3c0ddd2577f99db5cd908a63",
+      "redPixels": 24382
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C171",
+      "confidence": 0.51,
+      "page": 6,
+      "index": 24,
+      "caption": "cell 171  conf 0.51",
+      "imageSha256": "b3ec1aaea8c35f13299420a2423f0a3ecdddcde1455042cf03248bb233b8cc56",
+      "redPixels": 20667
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C163",
+      "confidence": 0.61,
+      "page": 6,
+      "index": 25,
+      "caption": "cell 163  conf 0.61",
+      "imageSha256": "991f965a65884f53b11c571049345b333eee72b29dc9f3faa7cf144eb26c1e38",
+      "redPixels": 11329
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C126",
+      "confidence": 0.61,
+      "page": 6,
+      "index": 26,
+      "caption": "cell 126  conf 0.61",
+      "imageSha256": "8878fbfba033473c1bb4f2f2a414fc7ffec9a29aab586e092494fc6417c87faa",
+      "redPixels": 19142
+    },
+    {
+      "moduleId": "320MLF3WDIH0633",
+      "cell": "C176",
+      "confidence": 0.54,
+      "page": 6,
+      "index": 27,
+      "caption": "cell 176  conf 0.54",
+      "imageSha256": "bc1013fbc3325c483debfd47fe6c90a09d0695d792e1bf01a94499a92b944d8b",
+      "redPixels": 9788
+    }
+  ]
+}

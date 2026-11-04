@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = '2026-11-04-pull-overview-v1';
+const SHELL_VERSION = '2026-11-04-ogp-v1';
 let started = false;
 let installEvent = null;
 let registration = null;
@@ -44,7 +44,7 @@ async function inspectOfflineState() {
     const result = await checkWorker(worker);
     if (sequence !== statusSequence) return;
     if (result?.type === 'HGCAL_SHELL_STATUS' && result.version === SHELL_VERSION && result.ready) {
-      publish({ offlineStatus: 'ready', detail: '当前界面、编号表和位置图已缓存，可离线查号和记录。' });
+      publish({ offlineStatus: 'ready', updateAvailable: !!registration?.waiting, detail: '当前界面、编号表、位置图和 OGP 解析器已缓存，可离线查号和记录。' });
     } else {
       publish({ offlineStatus: 'error', detail: '离线文件尚未完整准备，请保持联网，关闭应用后重新打开。' });
     }
@@ -56,7 +56,7 @@ async function inspectOfflineState() {
 function observeWorker(worker) {
   if (!worker) return;
   worker.addEventListener('statechange', () => {
-    if (worker.state === 'installed' && registration?.waiting) publish({ updateAvailable: true });
+    if (worker.state === 'installed' && registration?.waiting && (registration.active || navigator.serviceWorker.controller)) publish({ updateAvailable: true });
     if (worker.state === 'activated') void inspectOfflineState();
     if (worker.state === 'redundant' && !registration?.active) {
       publish({ offlineStatus: 'error', detail: '离线文件下载未完成，请联网重新打开；本机记录仍然保留。' });
@@ -75,7 +75,7 @@ async function prepareOffline() {
     });
     registration.addEventListener('updatefound', () => observeWorker(registration.installing));
     observeWorker(registration.installing);
-    if (registration.waiting) publish({ updateAvailable: true });
+    if (registration.waiting && (registration.active || navigator.serviceWorker.controller)) publish({ updateAvailable: true });
     navigator.serviceWorker.addEventListener('controllerchange', () => void inspectOfflineState());
     void navigator.serviceWorker.ready.then(() => inspectOfflineState()).catch(() => {});
     await inspectOfflineState();

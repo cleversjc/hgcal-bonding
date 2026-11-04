@@ -1,8 +1,9 @@
 import { getMappings, normalizeTarget, normalizeWire, wireKey } from './mapping.js';
+import { validateOgpState } from './ogp.js';
 
 const NAME = 'hgcal-bonding-workbench';
 let connection;
-export function emptyState() { return { schemaVersion: 1, modules: [], records: [], overallRecords: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
+export function emptyState() { return { schemaVersion: 1, modules: [], records: [], overallRecords: [], ogpImports: [], ogpRows: [], ogpImages: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
 async function db() {
   if (connection) return connection;
   connection = await new Promise((resolve, reject) => {
@@ -57,7 +58,21 @@ export function mergeBackup(current, incoming) {
   const overallRecords = [...(current.overallRecords || [])];
   const overallIds = new Set(overallRecords.map(r => r.id));
   (incoming.overallRecords || []).forEach(r => { if (overallIds.has(r.id)) skipped++; else { overallRecords.push(r); overallIds.add(r.id); added++; } });
-  return { state: { ...current, modules, records, overallRecords, activeModuleId: current.activeModuleId || incoming.activeModuleId, importedMapping: current.importedMapping.length ? current.importedMapping : incoming.importedMapping, mappingMeta: current.importedMapping.length ? current.mappingMeta : incoming.mappingMeta }, added, skipped };
+  const ogpImports = [...(current.ogpImports || [])], ogpRows = [...(current.ogpRows || [])], ogpImages = [...(current.ogpImages || [])];
+  const importIds = new Set(ogpImports.map(r => r.id)), rowIds = new Set(ogpRows.map(r => r.id)), imageIds = new Set(ogpImages.map(r => r.id));
+  for (const report of incoming.ogpImports || []) {
+    const reportRows = incoming.ogpRows.filter(r => r.importId === report.id);
+    if (importIds.has(report.id)) { skipped += reportRows.length; continue; }
+    const needed = new Set(reportRows.map(r => r.imageId));
+    const reportImages = incoming.ogpImages.filter(r => needed.has(r.id));
+    if (reportRows.some(r => rowIds.has(r.id)) || reportImages.some(r => imageIds.has(r.id) && ogpImages.find(p => p.id === r.id).data !== r.data)) invalid('OGP 备份 ID 冲突');
+    ogpImports.push(report); importIds.add(report.id);
+    for (const row of reportRows) { ogpRows.push(row); rowIds.add(row.id); added++; }
+    for (const image of reportImages) if (!imageIds.has(image.id)) { ogpImages.push(image); imageIds.add(image.id); }
+  }
+  const merged = { ...current, modules, records, overallRecords, ogpImports, ogpRows, ogpImages, activeModuleId: current.activeModuleId || incoming.activeModuleId, importedMapping: current.importedMapping.length ? current.importedMapping : incoming.importedMapping, mappingMeta: current.importedMapping.length ? current.mappingMeta : incoming.mappingMeta };
+  validateState(merged);
+  return { state: merged, added, skipped };
 }
 
 const STATUSES = new Set(['open', 'repaired', 'closed', 'void']);
@@ -248,4 +263,5 @@ function validateState(data) {
     requireString(data.mappingMeta.source, '用户映射来源', { max: 2048 });
     requireDate(data.mappingMeta.importedAt, '映射导入时间');
   } else if (data.mappingMeta !== null) invalid('空映射的版本信息');
+  validateOgpState(data);
 }
