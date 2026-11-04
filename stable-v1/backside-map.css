@@ -1,0 +1,46 @@
+.backside-diagram{padding:18px 20px 16px}
+.backside-orientation{display:flex;background:#f0f3ee;border-radius:8px;padding:4px;gap:4px;max-width:460px;margin:0 auto}
+.backside-orientation button{flex:1;min-height:44px;background:none;border:0;border-radius:5px;font-size:12px;color:var(--muted);padding:9px 10px}
+.backside-orientation button.active{background:#fff;color:var(--green);font-weight:600;box-shadow:0 1px 4px #243b2d11}
+.backside-orientation-note{text-align:center;color:#65795f;font-size:11px;line-height:1.7;margin:12px 0 0}
+.backside-canvas{position:relative;width:100%;max-width:600px;margin:4px auto 0;aspect-ratio:985/954;isolation:isolate}
+.backside-grid{display:block;width:100%;height:auto;pointer-events:none}
+.backside-cell{fill:#e9eee7;stroke:#f9fbf7;stroke-width:2}
+.backside-cell-position{fill:#c8d8bd;stroke:#91aa82;stroke-width:2}
+.backside-cell.flagged{fill:#f3cd8b;stroke:#bc8134}
+.backside-cell.selected{fill:var(--accent);stroke:var(--green);stroke-width:4}
+.backside-position{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;width:48px;height:48px;min-width:44px;min-height:44px;border-radius:13px;border:1.5px solid #9ab18c;background:#fffefb;color:var(--green);font:500 21px ui-monospace, SFMono-Regular, Consolas, monospace,ui-monospace,monospace;box-shadow:0 3px 10px #163a2b15;padding:0;touch-action:manipulation;z-index:2}
+.backside-position:hover{border-color:var(--green);background:#f1f7e9}
+.backside-position.active{background:var(--accent);border-color:var(--green);box-shadow:0 0 0 3px #c3e58850,0 3px 10px #163a2b18}
+.backside-position.flagged:not(.active){background:#fff4df;border-color:#be873b}
+.backside-position:focus-visible{outline:3px solid #6b9b4f;outline-offset:4px}
+.backside-flag{position:absolute;right:-4px;top:-4px;width:12px;height:12px;border-radius:50%;background:#d49531;border:2px solid white;box-shadow:0 1px 4px #163a2b15}
+.backside-center-label{position:absolute;top:45%;left:50%;transform:translate(-50%,-50%);background:#f8faf6ed;border:1px solid #dce5d4;border-radius:12px;min-width:180px;text-align:center;padding:20px 18px;box-shadow:0 6px 24px #183c3608;color:var(--green);pointer-events:none}
+.backside-center-label>span{display:block;font:500 9px ui-monospace, SFMono-Regular, Consolas, monospace,monospace;letter-spacing:2px;color:#93a385;margin-bottom:10px}
+.backside-center-label>strong{display:block;font-size:13px;font-weight:500;white-space:nowrap}
+.backside-center-label>small{display:block;color:var(--muted);font-size:10px;margin-top:7px}
+.backside-map-key{display:flex;justify-content:center;gap:22px;font-size:10px;color:var(--muted);margin:5px 0 17px}
+.backside-map-key>span{display:flex;align-items:center;gap:6px}
+.backside-map-key i{width:7px;height:7px;display:inline-block;border-radius:50%}
+.backside-key-selected{background:#86ad55}.backside-key-flagged{background:#d49531}
+.backside-sequence{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding-top:15px;font-size:10px;color:var(--muted)}
+.backside-sequence strong{font-weight:500;font-size:13px;color:var(--green);white-space:nowrap}
+.backside-sequence i{font-style:normal;color:#9cb087;margin:0 4px}
+.backside-source{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;line-height:1.6;font-size:9px;color:#85917e}
+.backside-source a{color:#557748;white-space:nowrap;text-decoration:underline;text-underline-offset:3px;padding:6px 0}
+@media(max-width:760px){
+  .backside-diagram{padding:14px 12px 12px}
+  .backside-orientation button{font-size:11px;padding:8px 7px}
+  .backside-orientation-note{font-size:10px;margin-top:10px}
+  .backside-position{width:44px;height:44px;font-size:20px;border-radius:12px}
+  .backside-center-label{min-width:150px;padding:13px 12px;border-radius:9px}
+  .backside-center-label>span{font-size:8px;letter-spacing:1.5px;margin-bottom:7px}
+  .backside-center-label>strong{font-size:11px}
+  .backside-center-label>small{font-size:9px;margin-top:5px}
+  .backside-map-key{font-size:9px;margin:5px 0 13px}
+  .backside-sequence{font-size:9px;padding-top:12px;gap:8px}
+  .backside-sequence strong{font-size:12px}
+  .backside-sequence i{margin:0 2px}
+  .backside-source{font-size:8px;gap:6px;margin-top:8px}
+}
+@media(max-width:380px){.backside-diagram{padding-left:8px;padding-right:8px}.backside-sequence strong{font-size:11px}.backside-sequence i{margin:0 1px}.backside-center-label{min-width:140px}}
