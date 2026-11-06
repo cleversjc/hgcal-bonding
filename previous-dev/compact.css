@@ -1,0 +1,72 @@
+/* Presentation-only refinements. No controls, alerts or record data are hidden. */
+.page-title{align-items:center;margin-bottom:18px}
+.page-title .title-action{margin-top:0}
+.topbar{height:70px}
+.module-button{min-height:44px}
+.module-button .mono{display:block}
+.rail-bottom{padding:0 12px}
+.rail-scope{padding:12px;margin-bottom:0}
+.rail-scope strong{margin-top:0}
+.clean-status{border:0;background:none;padding:0 2px;margin-bottom:14px;min-height:32px;gap:12px}
+.clean-status>span{font-size:12px;margin:0;line-height:1.6}
+.clean-status .text-button{font-size:12px;min-height:36px;flex:none}
+.selected-card .selection-heading{margin-top:0;letter-spacing:-1px}
+.selected-card .kind-label{font-size:12px}
+.selected-card .wire-label{font-size:12px}
+.selected-card .wire-chip{font-size:14px;min-width:68px;min-height:44px}
+.selected-card .reference-xy{font-size:12px;text-align:left}
+.reference-xy summary{min-height:36px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.reference-xy summary::before{content:'▸';font-size:12px}
+.reference-xy[open] summary::before{content:'▾'}
+.reference-xy p,.reference-xy .mono{font-size:12px;overflow-wrap:anywhere}
+.reference-xy .xy-review-tag{font-size:10px}
+.map-legend{font-size:11px}
+.summary-card .mini-stat-row{border-top:0}
+.mini-stat-row span{font-size:11px}
+.empty-state .button{margin-top:18px}
+.quiet-details{margin-top:16px;font-size:12px;color:var(--muted)}
+.quiet-details>summary{padding:10px 0;cursor:pointer;min-height:40px}
+.quiet-details p{line-height:1.85;margin:5px 0 12px}
+.clean-settings{grid-template-columns:minmax(260px,1fr) minmax(300px,1.25fr)}
+.clean-settings .settings-actions{margin-top:14px}
+.data-count{font-size:16px;font-weight:500}
+.essential-note{font-size:12px;color:var(--muted);margin-top:12px;line-height:1.8}
+.release-label{font-size:11px;color:var(--muted);margin-top:8px}
+.settings-details>summary{padding:16px 20px;min-height:52px;cursor:pointer;font-size:13px;font-weight:500}
+.settings-details[open]>summary{border-bottom:1px solid var(--line)}
+.settings-details .card-pad>p{font-size:12px;line-height:1.85;margin-bottom:12px}
+.settings-details .source-notes{margin-top:15px;font-size:12px}
+.backside-center-label{padding:13px 18px;min-width:120px}
+.backside-center-label>strong{font-size:13px}
+.backside-orientation-note{font-size:12px;margin-top:10px}
+.backside-source{justify-content:flex-end;font-size:12px}
+.backside-map-key,.backside-sequence{font-size:11px}
+@media(max-width:950px){.clean-settings{grid-template-columns:1fr}}
+@media(max-width:760px){
+ .topbar{height:62px}
+ .content{padding-top:16px}
+ .page-title h1{font-size:24px}
+ .page-title .title-action{margin-top:0}
+ .clean-status{margin-bottom:10px;padding:0 2px}
+ .clean-status>span,.clean-status .text-button{font-size:11px}
+ .selected-card .card-pad{grid-template-columns:minmax(70px,1fr) minmax(0,2fr);gap:0 10px}
+ .selected-card .selection-heading{font-size:34px;margin:0 0 5px}
+ .selected-card .kind-label{font-size:11px}
+ .selected-card .wire-section{max-width:none;min-width:0}
+ .selected-card .wire-label{font-size:11px}
+ .selected-card .wire-chips{gap:5px}
+ .selected-card .wire-chip{font-size:12px;min-width:52px;min-height:44px;padding:9px 7px}
+ .selected-card .reference-xy{font-size:11px;margin-top:8px;padding-top:4px}
+ .reference-xy summary{justify-content:flex-end;font-size:11px;min-height:36px}
+ .reference-xy p,.reference-xy .mono{font-size:11px}
+ .selected-card .action-record{font-size:13px;min-height:44px;margin-top:12px}
+ .map-legend{font-size:10px;row-gap:8px}
+ .legend-items{flex-wrap:wrap;gap:8px 12px}
+ .clean-settings .card-head h2{font-size:14px}
+ .settings-details>summary{padding:15px 17px;font-size:13px}
+ .backside-center-label{padding:11px 15px;min-width:110px}
+ .backside-center-label>strong{font-size:12px}
+ .backside-orientation-note{font-size:11px}
+ .backside-map-key,.backside-sequence{font-size:10px}
+ .backside-source{font-size:11px}
+}

@@ -1,39 +1,11 @@
 import { getMappings, normalizeTarget, normalizeWire, wireKey } from './mapping.js';
 import { validateOgpState } from './ogp.js';
 
-const NAME = 'hgcal-bonding-workbench';
-let connection;
+import { createPersistence } from './persistence.js';
+
 export function emptyState() { return { schemaVersion: 1, modules: [], records: [], overallRecords: [], ogpImports: [], ogpRows: [], ogpImages: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
-async function db() {
-  if (connection) return connection;
-  connection = await new Promise((resolve, reject) => {
-    const request = indexedDB.open(NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('state');
-    request.onsuccess = () => { request.result.onversionchange = () => { request.result.close(); connection = null; }; resolve(request.result); };
-    request.onerror = () => reject(new Error('无法打开本机存储，请允许此浏览器保存网站数据。'));
-    request.onblocked = () => reject(new Error('请关闭其他 Bonding 页面后重新打开。'));
-  });
-  return connection;
-}
-export async function loadState() {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const tx = database.transaction('state', 'readonly');
-    const request = tx.objectStore('state').get('main');
-    request.onsuccess = () => resolve(request.result || emptyState());
-    request.onerror = () => reject(request.error);
-  });
-}
-export async function saveState(state) {
-  validateState(state);
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const tx = database.transaction('state', 'readwrite');
-    tx.objectStore('state').put(state, 'main');
-    tx.oncomplete = () => resolve();
-    tx.onerror = tx.onabort = () => reject(new Error('未能保存。请检查设备可用空间，导出备份后再试。'));
-  });
-}
+const persistence = createPersistence({emptyState,validateState});
+export const {loadState,saveState,getImage,getImageBlob,hydrateState,getBackupInfo,noteBackup,fingerprint,checkpointBackup,prepareRollback} = persistence;
 export function makeBackup(state) {
   return { app: 'HGCAL Bonding Workbench', schemaVersion: 1, exportedAt: new Date().toISOString(), data: state };
 }
@@ -58,17 +30,25 @@ export function mergeBackup(current, incoming) {
   const overallRecords = [...(current.overallRecords || [])];
   const overallIds = new Set(overallRecords.map(r => r.id));
   (incoming.overallRecords || []).forEach(r => { if (overallIds.has(r.id)) skipped++; else { overallRecords.push(r); overallIds.add(r.id); added++; } });
-  const ogpImports = [...(current.ogpImports || [])], ogpRows = [...(current.ogpRows || [])], ogpImages = [...(current.ogpImages || [])];
+  const ogpImports = (current.ogpImports || []).map(r=>({...r})), ogpRows = [...(current.ogpRows || [])], ogpImages = [...(current.ogpImages || [])];
   const importIds = new Set(ogpImports.map(r => r.id)), rowIds = new Set(ogpRows.map(r => r.id)), imageIds = new Set(ogpImages.map(r => r.id));
   for (const report of incoming.ogpImports || []) {
     const reportRows = incoming.ogpRows.filter(r => r.importId === report.id);
-    if (importIds.has(report.id)) { skipped += reportRows.length; continue; }
+    const previous=ogpImports.find(r=>r.id===report.id);
+    if (previous && !previous.partial && !report.partial) { skipped += reportRows.length; continue; }
+    const newRows=reportRows.filter(r=>{if(rowIds.has(r.id)){skipped++;return false;}return true;});
     const needed = new Set(reportRows.map(r => r.imageId));
     const reportImages = incoming.ogpImages.filter(r => needed.has(r.id));
-    if (reportRows.some(r => rowIds.has(r.id)) || reportImages.some(r => imageIds.has(r.id) && ogpImages.find(p => p.id === r.id).data !== r.data)) invalid('OGP 备份 ID 冲突');
-    ogpImports.push(report); importIds.add(report.id);
-    for (const row of reportRows) { ogpRows.push(row); rowIds.add(row.id); added++; }
+    if (reportImages.some(r => imageIds.has(r.id) && ogpImages.find(p => p.id === r.id).data !== r.data)) invalid('OGP 备份 ID 冲突');
+    if(!previous){ogpImports.push({...report});importIds.add(report.id);}
+    for (const row of newRows) { ogpRows.push(row); rowIds.add(row.id); added++; }
     for (const image of reportImages) if (!imageIds.has(image.id)) { ogpImages.push(image); imageIds.add(image.id); }
+    if(previous){
+      const combined=ogpRows.filter(r=>r.importId===report.id),pageMap=new Map([...previous.pages,...report.pages].map(p=>[p.page,p]));
+      const pages=[...pageMap.values()].sort((a,b)=>a.page-b.page).map(p=>({...p,count:combined.filter(r=>r.sourcePage===p.page).length}));
+      const expected=Math.max(previous.originalRowCount||previous.rowCount,report.originalRowCount||report.rowCount);
+      Object.assign(previous,{pages,rowCount:combined.length,partial:combined.length!==expected||pages.length!==report.source.pageCount,originalRowCount:expected});
+    }
   }
   const merged = { ...current, modules, records, overallRecords, ogpImports, ogpRows, ogpImages, activeModuleId: current.activeModuleId || incoming.activeModuleId, importedMapping: current.importedMapping.length ? current.importedMapping : incoming.importedMapping, mappingMeta: current.importedMapping.length ? current.mappingMeta : incoming.mappingMeta };
   validateState(merged);
@@ -109,9 +89,10 @@ function requireTarget(target, side, label) {
   if (side === 'back' ? !/^[G-L]$/.test(target)
     : !(/^[A-FM-R]$/.test(target) || (/^C\d+$/.test(target) && Number(target.slice(1)) >= 1 && Number(target.slice(1)) <= 198))) invalid(label);
 }
-function requirePhoto(photo) {
+function requirePhoto(photo, allowImageRefs=false) {
   if (!isObject(photo)) invalid('备份照片');
   requireString(photo.name, '照片名称', { empty: true, max: 1024 });
+  if (allowImageRefs && photo.data === undefined && typeof photo.id === 'string' && /^[a-f0-9]{64}$/.test(photo.sha256) && Number.isInteger(photo.byteLength) && photo.byteLength > 0 && /^image\/(jpeg|png|webp)$/.test(photo.mime)) return;
   if (typeof photo.data !== 'string') invalid('备份照片');
   const match = photo.data.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!match || match[2].length % 4 !== 0) invalid('备份照片');
@@ -161,7 +142,7 @@ function requireOgpSnapshot(record) {
   if (snapshot.ranking !== 'review_order_not_probability') invalid('OGP 候选排序依据');
   requireDate(snapshot.confirmedAt, 'OGP 现场确认时间');
 }
-function validateState(data) {
+function validateState(data, {allowImageRefs=false}={}) {
   if (!isObject(data) || data.schemaVersion !== 1) invalid('数据版本');
   if (!Array.isArray(data.modules) || !Array.isArray(data.records) || !Array.isArray(data.importedMapping)) invalid('必要的数据列表');
   const modules = new Map();
@@ -213,7 +194,7 @@ function validateState(data) {
     requireDate(record.createdAt, '异常创建时间');
     requireDate(record.updatedAt, '异常更新时间');
     if (!Array.isArray(record.photos) || record.photos.length > 3) invalid('记录照片列表');
-    record.photos.forEach(requirePhoto);
+    record.photos.forEach(photo=>requirePhoto(photo,allowImageRefs));
     if (!Array.isArray(record.history) || !record.history.length) invalid('处理历史');
     for (const event of record.history) {
       if (!isObject(event) || !STATUSES.has(event.status)) invalid('处理历史状态');
@@ -241,7 +222,7 @@ function validateState(data) {
       requireString(record.note, '总体记录备注', { empty: true, max: 4000 });
       requireDate(record.createdAt, '总体记录时间');
       if (!Array.isArray(record.photos) || record.photos.length > 6) invalid('总体记录照片列表');
-      record.photos.forEach(requirePhoto);
+      record.photos.forEach(photo=>requirePhoto(photo,allowImageRefs));
     }
   }
   if (data.activeModuleId !== null && (typeof data.activeModuleId !== 'string' || !modules.has(data.activeModuleId))) invalid('当前模块');
@@ -263,5 +244,5 @@ function validateState(data) {
     requireString(data.mappingMeta.source, '用户映射来源', { max: 2048 });
     requireDate(data.mappingMeta.importedAt, '映射导入时间');
   } else if (data.mappingMeta !== null) invalid('空映射的版本信息');
-  validateOgpState(data);
+  validateOgpState(data,{allowImageRefs});
 }

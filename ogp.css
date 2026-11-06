@@ -4,6 +4,29 @@
 .ogp-count{font-size:14px;line-height:1.8}
 .ogp-confidence{margin:10px 0 22px;max-width:780px}
 .ogp-module{margin-bottom:22px;overflow:hidden}
+.field-panel{position:sticky;top:0;z-index:12;padding:18px 20px;margin:0 0 18px;background:#fff;border:1px solid var(--line);border-radius:10px}
+.ogp-item{scroll-margin-top:280px}
+.field-module{font-size:16px;font-weight:700;overflow-wrap:anywhere}
+.field-module-row{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.field-module-row .field-module{border:0;background:transparent;text-align:left;padding:0;min-height:32px}
+.field-module-row>span{font-size:11px;color:var(--muted)}
+.field-current{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:12px 0}
+.field-current strong{font-size:36px;line-height:1.1}
+.field-current span{font-size:13px;color:var(--muted)}
+.field-panel progress{width:100%;height:10px;accent-color:#285247;display:block;margin-bottom:14px}
+.field-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.field-controls .button{min-height:44px}
+.field-controls button{white-space:nowrap;flex-shrink:0}
+.field-controls form{display:flex;gap:6px;flex:1;min-width:160px}
+.field-controls input{flex:1;min-width:0;width:0;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:6px}
+.field-backup{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:12px;font-size:11px;color:var(--muted)}
+.field-backup span{overflow-wrap:anywhere}
+.field-backup button{flex-shrink:0;min-height:44px}
+.ogp-item.is-current{box-shadow:inset 4px 0 #81a657;background:#f8fcf4}
+.recovery-panel{margin-bottom:20px}
+#toast button{display:inline-block;margin-left:8px;min-height:36px;border:1px solid #cbe9b6;border-radius:5px;background:transparent;color:#e5ffd3;padding:5px 9px;font-weight:600}
+#toast.visible{pointer-events:auto}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .ogp-module .card-head h2{font-size:15px;overflow-wrap:anywhere}
 .ogp-module .card-head p{margin-top:6px}
 .ogp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line)}
@@ -45,6 +68,8 @@
  .ogp-toolbar select{font-size:16px;width:100%}
  .ogp-toolbar>.button{flex:1;min-height:44px}
  .ogp-count{font-size:12px}
+ .field-panel{padding:15px 13px}
+ .field-current strong{font-size:32px}
  .ogp-item{padding:15px 12px;gap:12px}
  .ogp-thumbnail{width:120px;flex-basis:120px}
  .ogp-item-info>p{font-size:11px}

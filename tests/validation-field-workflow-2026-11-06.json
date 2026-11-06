@@ -1,0 +1,204 @@
+{
+  "baseCommit": "7655f512f86764506a051b51defd486245676e09",
+  "rollbackTag": "dev-before-field-workflow-20261106",
+  "shellVersion": "2026-11-06-field-workflow-v1",
+  "stableV1Tree": "adf64a632c982da2c3083139e8a0c8f2df220761",
+  "environment": "Windows, isolated headless Edge; responsive layouts 390x844 and 1440x1000",
+  "modelSuite": "passed",
+  "fieldWorkflow": {
+    "passed": true,
+    "legacyMigration": true,
+    "legacyUnchangedUntilExplicitRollback": true,
+    "ordinaryAndOgpPhotosPreserved": true,
+    "metadataBytes": 115685,
+    "imageWritesOnComplete": 0,
+    "currentModuleMode": true,
+    "wireJump": true,
+    "nextFocus": true,
+    "undo": true,
+    "resumeModuleAndPosition": true,
+    "moduleZip": {
+      "modules": [
+        "320MLF3WDIH0631"
+      ],
+      "rows": 44,
+      "pages": [
+        2,
+        3
+      ],
+      "partial": true,
+      "images": 44
+    },
+    "fullZipBytes": 7166019,
+    "compatibleJsonBytes": 9592425,
+    "zipRestoredAndPartialFullMerge": true,
+    "newRecordBackupReminder": true,
+    "immutableStoredImages": true,
+    "preUpgradeSnapshot": true,
+    "realDowngradeUpgradeWithEdits": true,
+    "offlineAfterReturn": true,
+    "pageErrors": []
+  },
+  "recoveryFailures": {
+    "passed": true,
+    "failedImageMigrationAtomic": true,
+    "legacyDataUnchanged": true,
+    "bootErrorHasWorkingPreviousVersion": true,
+    "corruptZipRejected": true,
+    "restoreFailureLeavesCurrentDataUntouched": true,
+    "firstEverOfflineRollbackAndReturn": true
+  },
+  "fullPdfRegression": {
+    "passed": true,
+    "checks": [
+      {
+        "name": "Independent preprocessor: 121 exact original image byte hashes"
+      },
+      {
+        "name": "Per-wire pull tests, mapping snapshots and anomaly photo"
+      },
+      {
+        "name": "Overall photo, void audit and backside six-position workflow"
+      },
+      {
+        "name": "PDF preview and explicit confirmation do not save early"
+      },
+      {
+        "name": "All six PDF pages, four module IDs, 121 labels/confidences and exactly one first Wire",
+        "detail": {
+          "320MLF3WDIH0630": 10,
+          "320MLF3WDIH0631": 44,
+          "320MLF3WDIH0632": 5,
+          "320MLF3WDIH0633": 62
+        }
+      },
+      {
+        "name": "All 121 native crops match independent originals and preserve red annotations",
+        "detail": {
+          "count": 121,
+          "maxRmse": 2.589031643767715,
+          "minRedRatio": 0.9769267939115729,
+          "maxRedRatio": 1.08552091878589,
+          "outliers": [
+            {
+              "page": 2,
+              "index": 16,
+              "rmse": 1.8801532194138386,
+              "redRatio": 1.0688265385211595
+            },
+            {
+              "page": 4,
+              "index": 1,
+              "rmse": 2.043452131708334,
+              "redRatio": 1.062361350751787
+            },
+            {
+              "page": 4,
+              "index": 2,
+              "rmse": 1.760041565067112,
+              "redRatio": 1.0565500406834825
+            },
+            {
+              "page": 5,
+              "index": 3,
+              "rmse": 1.7812128407430083,
+              "redRatio": 1.08552091878589
+            },
+            {
+              "page": 5,
+              "index": 9,
+              "rmse": 2.0909057692215325,
+              "redRatio": 1.0504765740367834
+            }
+          ]
+        }
+      },
+      {
+        "name": "Manual correction validation, original/edited audit, duplicates and IndexedDB reload"
+      },
+      {
+        "name": "Offline reload, image zoom, reusable PDF parsing, repeated rows and complete local worker cache",
+        "detail": {
+          "rows": 242,
+          "images": 121,
+          "cachedFiles": 50
+        }
+      },
+      {
+        "name": "CSV image IDs / escaped notes and full JSON containing every image byte",
+        "detail": {
+          "backupBytes": 70846483
+        }
+      },
+      {
+        "name": "Desktop/mobile fit and separate stable-v1 IndexedDB"
+      },
+      {
+        "name": "Full UI backup restore on empty device and legacy merge preserve all records / images"
+      },
+      {
+        "name": "Reusable preprocessing JSON import preserves original JPEG bytes",
+        "detail": {
+          "bytes": 9323219
+        }
+      }
+    ],
+    "pageErrors": []
+  },
+  "oneTapCompletion": {
+    "passed": true,
+    "defaultUnfinished": true,
+    "oneTapNoFormOrDialog": true,
+    "onlyClickedDetectionDisappears": true,
+    "completedArchive": true,
+    "reopen": true,
+    "completionFromZoom": true,
+    "noNormalClassification": true,
+    "wireNotesImagesPreserved": true,
+    "offlinePersistence": true,
+    "csvCompletionFields": true,
+    "fullBackupRestore": true,
+    "oldBackupsSupported": "covered by model suite",
+    "pageErrors": [],
+    "dialogs": []
+  },
+  "existingEdgeCases": {
+    "passed": true,
+    "cancelWithoutSave": true,
+    "invalidImportWithoutSave": true,
+    "staleWindowRejected": true,
+    "otherWindowRecordPreserved": true,
+    "mobileNavigationVisible": true,
+    "pageErrors": []
+  },
+  "frozenPreviousCoreAssets": [
+    "app.js",
+    "domain-data.js",
+    "channel-map-data.js",
+    "mapping.js",
+    "styles.css",
+    "compact.css",
+    "backside-map.js",
+    "backside-map.css",
+    "assets/icon.svg",
+    "assets/icon-192.png",
+    "assets/icon-512.png",
+    "assets/cell-reference.png",
+    "assets/backside-reference.png",
+    "ogp-pdf.js",
+    "ogp.css",
+    "vendor/pdfjs/pdf.min.mjs",
+    "vendor/pdfjs/pdf.worker.min.mjs"
+  ],
+  "largeHistoricalBackupRoundtrip": {
+    "passed": true,
+    "inputBackupBytes": 70832176,
+    "metadataBytes": 204476,
+    "rows": 242,
+    "images": 121,
+    "migrationExact": true,
+    "downgradeExact": true,
+    "returnExact": true,
+    "allImageAndPhotoHashesPreserved": true
+  }
+}

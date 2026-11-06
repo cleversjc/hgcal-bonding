@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "7655f512f86764506a051b51defd486245676e09",
+  "tag": "dev-before-field-workflow-20261106",
+  "originalSha256": {
+    "index.html": "ca698c847c5b54cac5b10fcb43059b46b81c4dc0d8a2c726ea8b8ed9741ca2d2",
+    "app.js": "a077cb4025acdb7775b0c0764ed5e213187a371533573bcd4218f12fe5879ba0",
+    "mobile-app.js": "6f7c41af331df8c3809a8f9824689c2c4f397f9d37f7e0a89e9caebbcf7fccca",
+    "domain-data.js": "5214654112137245b60e654966ee16f3fadc10f8ef68989a77aaebd7c54d5bc3",
+    "channel-map-data.js": "6308044dcb0e8862d3b58e366dc9269924e2899080ae0c65fe4bf316dcc06853",
+    "mapping.js": "9f2be9361abf8643d43ae7e6fd27a7092e7d31c9c5c979f85633f352d9688439",
+    "storage.js": "40ee154edcd4dfe1ceec813689b6b7dc65c627f2aba1bb13fc4a0d3b1e114b91",
+    "styles.css": "ca570f2b2c9cff343bee127d7f3a87553852aeee6311f175e596f64862887af4",
+    "compact.css": "7fcdfdcb442b1a5e62816cf4a8a1c014bea3c2f6b72ef55855a11ee82941934c",
+    "backside-map.js": "e12c5dce146465c97a4d2ff73750ebf824bab94c4d1ded546e44bb79d3b3ae9b",
+    "backside-map.css": "e555e64d6cd481732157b0e0b25a47f4d0951e9e95ee83a6200496ac4ddfb81d",
+    "manifest.webmanifest": "8de8d91b74e99e62d9b491d88f67c131c554bc53e1cf7a181e40c9b048c7c2fa",
+    "assets/icon.svg": "463871b4b1e452ad30c9e8551a08f7b7816cbf3953a654a888a88070ad620713",
+    "assets/icon-192.png": "87b0c12d00b7ea9ac3be7651b59d1a1bb2eb98c0c570bd4ac78a63ece5d79ce3",
+    "assets/icon-512.png": "b0d0cdd9b6106064e8ecec829de8acba501aec4d3e4041854fc5c65e26a470eb",
+    "assets/cell-reference.png": "6d1b043a9706c5f810d3fe591b5656d94391fd10e1e5a462aeaa9c2536728fac",
+    "assets/backside-reference.png": "f7c45077f0693b1f45d651a2e1ade1f0d346eadbf427bbb4d6dc775ebcf81fb3",
+    "ogp.js": "2a617e912eece715bdc299d390a001737504fbecb179f48f2198634512e90911",
+    "ogp-pdf.js": "78adcc2371844de58d621a08e33e19667c8940c6f7329fc44b7ad5e7b5502b24",
+    "ogp.css": "8a749bb9b1f53364de28cfc08ed79e0fd5afa0219729772a3f81dbf66481502d",
+    "vendor/pdfjs/pdf.min.mjs": "2221020ea508479dcc1221f36f2731656339230097c69ba1f78802832c0ad685",
+    "vendor/pdfjs/pdf.worker.min.mjs": "51a2fd1ea47f1a9b0814e65e0c336c739c54957795ee774e8f93cb81e8028dd1",
+    "sw.js": "9d9e2431ed483223ccd9ff3a7d9743ed3fae456c1ddbaf4950e42fda96b3c2de"
+  },
+  "runtimeChanges": {
+    "sw.js": "independent version/cache scope",
+    "mobile-app.js": "snapshot version and offline parent-worker fallback",
+    "index.html": "previous-version label and return bridge",
+    "manifest.webmanifest": "separate previous-version installation label",
+    "ogp.js": "scoped report validation compatibility",
+    "storage.js": "partial/full restore merging compatibility"
+  }
+}

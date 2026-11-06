@@ -4,7 +4,7 @@
  * in mobile-app.js. Do not call skipWaiting: open pages/drafts keep their
  * current shell until all pages using the previous worker have closed.
  */
-const SHELL_VERSION = '2026-11-04-ogp-complete-v1';
+const SHELL_VERSION = '2026-11-06-field-workflow-v1';
 const CACHE_PREFIX = 'hgcal-bonding-shell-';
 const CACHE_NAME = CACHE_PREFIX + SHELL_VERSION;
 const SCOPE = new URL('./', self.registration.scope);
@@ -15,7 +15,8 @@ const FILES = [
   'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png',
   'assets/cell-reference.png', 'assets/backside-reference.png',
   'ogp.js', 'ogp-pdf.js', 'ogp.css',
-  'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs'
+  'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs',
+  'persistence.js', 'archive.js', 'field-session.js', 'vendor/zip/jszip.min.js', 'previous-dev/index.html', 'previous-dev/app.js', 'previous-dev/mobile-app.js', 'previous-dev/domain-data.js', 'previous-dev/channel-map-data.js', 'previous-dev/mapping.js', 'previous-dev/storage.js', 'previous-dev/styles.css', 'previous-dev/compact.css', 'previous-dev/backside-map.js', 'previous-dev/backside-map.css', 'previous-dev/manifest.webmanifest', 'previous-dev/assets/icon.svg', 'previous-dev/assets/icon-192.png', 'previous-dev/assets/icon-512.png', 'previous-dev/assets/cell-reference.png', 'previous-dev/assets/backside-reference.png', 'previous-dev/ogp.js', 'previous-dev/ogp-pdf.js', 'previous-dev/ogp.css', 'previous-dev/vendor/pdfjs/pdf.min.mjs', 'previous-dev/vendor/pdfjs/pdf.worker.min.mjs', 'previous-dev/sw.js', 'previous-dev/recovery.js'
 ];
 const URLS = FILES.map(path => new URL(path, SCOPE).href);
 const ALLOWED = new Set(URLS);
@@ -32,7 +33,7 @@ async function validShellResponse(response, url) {
   if (!response.ok || response.type === 'opaque') return false;
   if (response.url && new URL(response.url).origin !== SCOPE.origin) return false;
   const contentType = response.headers.get('content-type') || '';
-  if (url === INDEX_URL) {
+  if (url.endsWith('.html')) {
     if (!contentType.includes('text/html')) return false;
     const html = await response.clone().text();
     // Never save a hosting sign-in/error page as the offline application.
@@ -82,6 +83,7 @@ function cacheKey(request) {
   if (url.origin !== SCOPE.origin) return null;
   const plain = url.origin + url.pathname;
   if (plain === SCOPE.href || plain === INDEX_URL) return INDEX_URL;
+  if (plain === new URL('previous-dev/',SCOPE).href) return new URL('previous-dev/index.html',SCOPE).href;
   return ALLOWED.has(plain) ? plain : null;
 }
 
@@ -107,7 +109,7 @@ self.addEventListener('message', event => {
   if (event.data?.type !== 'HGCAL_SHELL_STATUS' || !event.ports?.[0]) return;
   event.waitUntil((async () => {
     event.ports[0].postMessage({
-      type: 'HGCAL_SHELL_STATUS', version: SHELL_VERSION,
+      type: 'HGCAL_SHELL_STATUS', version: event.source?.url?.includes('/previous-dev/')?'previous-dev-7655f51':SHELL_VERSION,
       ready: await shellReady()
     });
   })());

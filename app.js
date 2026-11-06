@@ -1,10 +1,12 @@
 import { CELL_POSITIONS, GROUP_POSITIONS, MAP_IMAGE, BUILTIN_MAPPING, GROUNDING, BACKSIDE_ORDER, DOMAIN_NOTES, REFERENCE_MAP_METADATA, REFERENCE_COORDINATES } from './domain-data.js';
 import { normalizeTarget, normalizeWire, wireKey, parseMapping, validateAgainstBuiltin, getMappings, resolveStoredMappings, lookupTarget, lookupWire, coverage, csvEncode } from './mapping.js';
-import { loadState, saveState, makeBackup, readBackup, mergeBackup } from './storage.js';
+import { loadState, saveState, makeBackup, readBackup, mergeBackup, getImage, getImageBlob, hydrateState, getBackupInfo, noteBackup, fingerprint, checkpointBackup, prepareRollback } from './storage.js';
 import { BACKSIDE_POSITIONS, renderBacksideMap } from './backside-map.js';
 import { initMobileApp, getMobileAppState, promptMobileInstall } from './mobile-app.js';
 import { OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, setOgpCompletion, filterOgpRows, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest } from './ogp.js';
 import { parseOgpPdf } from './ogp-pdf.js';
+import {createArchive,readArchive} from './archive.js';
+import {readFieldSession,saveFieldSession,nextOgpRow,progressFor} from './field-session.js';
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -44,8 +46,12 @@ let toastTimer, returnFocus, modalKind = '', modalEpoch = 0, dirty = false, phot
 let channel;
 let stagedOgp = null, ogpController = null, ogpRowContext = null;
 const ogpImageUrls = new Map();
+const imageLoads=new Map();
+let imageObserver,backupInfo=null,undoCompletion=null,sessionTimer;
+const savedField=readFieldSession();
 const ui = {view:'lookup',side:'front',mode:'cell',target:'C19',wire:'',query:'19',zoom:1,rotated:false,backMachine:false,filter:'all',recordSearch:'',scope:'module'};
 Object.assign(ui, { ogpModule: 'all', ogpStatus: 'unfinished', ogpLimits: {} });
+Object.assign(ui,{ogpCurrentId:'',wireJump:''});
 const activeModule = () => state.modules.find(m => m.id === state.activeModuleId);
 const moduleRecords = () => state.records.filter(r => r.moduleId === state.activeModuleId && r.status !== 'void');
 const date = (v, full = false) => new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',...(full?{year:'numeric'}:{}),hour12:false}).format(new Date(v));
@@ -74,9 +80,9 @@ function mobileHelpModal() {
     '<div class="mobile-help"><div class="notice info">'+icon('check')+'<div><b data-mobile-status>'+mobileStatusLabel()+'</b><p>首次联网打开，等离线准备完成后，再从桌面图标使用。</p></div></div><div class="install-platforms"><section><h3>Android · Chrome</h3><ol><li>用 Chrome 打开本应用。</li><li>点右上角 ⋮，选择“安装和创建快捷方式”→“安装”；部分版本显示“安装应用”或“添加到主屏幕”。</li><li>确认后，从桌面 Bonding 图标打开。</li></ol></section><section><h3>iPhone · Safari</h3><ol><li>用 Safari 打开本应用。</li><li>点“共享”→“添加到主屏幕”；部分布局先打开页面菜单。</li><li>若有“作为网页 App 打开”，保持开启，再点“添加”。</li></ol></section></div><div class="local-data-note"><h3>先添加到主屏幕，再开始正式记录</h3><p>浏览器与桌面网页 App 的本地数据可能分开，尤其是 iPhone。已有记录时，先在原入口选择“映射与资料 → 完整备份”，再在新入口通过“恢复备份”导入。</p><p>模块、异常和照片只保存在当前设备的浏览器 / 网页 App 内，不会自动上传或同步。请定期导出完整 JSON 备份；清除网站数据、卸载或更换手机前先备份。记录人的姓名只是记录字段，不是账号。</p></div><div class="install-quick-start"><h3>开始使用</h3><p>选择 / 新建模块 → 正面查号或背面点选 → 记录异常 → 补充返修与复检 → 导出备份。</p></div></div>',
     button('close-modal','知道了')+'<button type="button" class="button primary" data-act="mobile-install" data-mobile-install '+(getMobileAppState().canInstall?'':'hidden')+'>安装 Bonding</button>',true);
 }
-function toast(message) {
-  $('#toast').textContent = message; $('#toast').classList.add('visible');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4000);
+function toast(message,undo=false) {
+  $('#toast').innerHTML=e(message)+(undo?' <button type="button" data-act="ogp-undo">撤销刚才操作</button>':''); $('#toast').classList.add('visible');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), undo?8000:4000);
 }
 function error(message) {
   const box = $('#form-error'); if (box) { box.textContent = message; box.scrollIntoView({block:'nearest'}); } else toast(message);
@@ -107,9 +113,9 @@ function historicalMappingMismatch(record) {
 async function commit(updater) {
   const operation = async () => {
     const work = async () => {
-      const latest = await loadState();
-      const next = updater(latest);
-      await saveState(next); state = next; updateEntries(); render();
+      const latest = await loadState({images:false});
+      const next = await updater(latest);
+      state = await saveState(next); updateEntries(); render();
       channel?.postMessage('updated');
     };
     if (navigator.locks) await navigator.locks.request('hgcal-bonding-save', work); else await work();
@@ -125,6 +131,7 @@ function render() {
   const mod = activeModule();
   const pageTitle = {lookup:'编号对照',ogp:'OGP 清单',records:'异常记录',mapping:'映射与资料'}[ui.view];
   $('#app').innerHTML = '<div class="shell"><aside class="sidebar"><div class="brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div>'+nav()+'</div><div class="rail-bottom"><div class="rail-scope"><strong>LD V3 / Full</strong></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumb"><b>HGCAL · LD V3 · 开发版</b></div><div class="mobile-brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div class="top-right"><button class="module-button" data-act="module" aria-label="选择或新建模块"><span class="module-icon">'+icon('hex')+'</span><span><span class="mono">'+e(mod?.id || '选择 / 新建模块')+'</span></span>'+icon('down')+'</button></div></header><div class="content">'+(ui.view==='lookup'?lookupPage():ui.view==='ogp'?ogpPage():ui.view==='records'?recordsPage():mappingPage())+footer()+'</div></main>'+nav(true)+'</div>';
+  observeImages();rememberField();
 }
 function sideToggle() {
   return '<div class="side-toggle" aria-label="模块正反面"><button type="button" data-act="side" data-side="front" aria-pressed="'+(ui.side==='front')+'" class="'+(ui.side==='front'?'active':'')+'">正面</button><button type="button" data-act="side" data-side="back" aria-pressed="'+(ui.side==='back')+'" class="'+(ui.side==='back'?'active':'')+'">背面</button></div>';
@@ -145,7 +152,7 @@ function mapCard() {
     return '<section class="card map-card backside-card"><div class="card-head"><div><h2>背面位置</h2></div></div>'+renderBacksideMap({target:ui.target,machineView:ui.backMachine,flagged})+'</section>';
   } else {
     const flagged = new Set(moduleRecords().filter(r=>r.side==='front').map(r=>r.target));
-    
+
     const special = new Set([13,14,61,62,69,70,142,143,153,154,162,163]);
     const circles = CELL_POSITIONS.map(p => { const target='C'+p.cell; return '<circle class="cell-hit '+(flagged.has(target)?'flagged ':'')+(target===ui.target?'selected':'')+'" cx="'+p.x+'" cy="'+p.y+'" r="'+(special.has(p.cell)?9:24)+'" role="button" tabindex="0" aria-label="选择 Cell '+p.cell+'" data-act="target" data-target="'+target+'"><title>Cell '+p.cell+'</title></circle>'; }).join('') + GROUP_POSITIONS.map(p=>'<circle class="cell-hit '+(flagged.has(p.target)?'flagged ':'')+(p.target===ui.target?'selected':'')+'" cx="'+p.x+'" cy="'+p.y+'" r="15" role="button" tabindex="0" aria-label="选择位点 '+p.target+'" data-act="target" data-target="'+p.target+'"><title>位点 '+p.target+'</title></circle>').join('');
     body = '<div class="map-wrap"><div class="map-scroll" id="map-scroll"><svg class="cell-map" id="cell-map" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+MAP_IMAGE.width+' '+MAP_IMAGE.height+'" style="width:'+ui.zoom*100+'%" role="group" aria-label="可点选的 198 个 cell 正面示意图"><g transform="'+(ui.rotated?'rotate(180 602 536.5)':'')+'"><image href="'+MAP_IMAGE.src+'" width="'+MAP_IMAGE.width+'" height="'+MAP_IMAGE.height+'"/>'+circles+'</g></svg></div></div><div class="map-legend"><div class="legend-items"><span><i class="legend-dot sel"></i>当前选择</span>' +'<span><i class="legend-dot warn"></i>有异常记录</span><span><i class="legend-dot"></i>未标记 ≠ 合格</span></div><span>'+ (ui.rotated?'视图已旋转 180°':'教程正面视角')+'</span></div>';
@@ -192,28 +199,84 @@ function recordsList() {
   if(!rows.length) return '<div class="empty-state"><div class="empty-icon">'+icon('log')+'</div><h3>'+(state.records.length?'没有符合条件的记录':'暂无异常记录')+'</h3>'+button(state.records.length?'clear-filter':'new-record',state.records.length?'清除筛选':'新增异常记录','plus','primary')+'</div>';
   return '<table class="records-table"><thead><tr><th>位置 / 模块</th><th>异常与线数</th><th>状态</th><th>发现时间</th><th>记录人</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr data-act="record-detail" data-id="'+e(r.id)+'" tabindex="0" role="button" aria-label="查看 '+e(r.target||r.wires.join(','))+' '+e(r.type)+'"><td><div class="record-target">'+e(r.target || '仅 Wire')+' <span class="small muted">'+e(r.wires.map(w=>'W'+w).join(' · '))+'</span></div><div class="secondary mono">'+e(r.moduleId)+' · '+sideName(r.side)+'</div>'+'</td><td>'+e(r.type)+(r.photos.length?'<span class="photo-mark">'+icon('camera')+r.photos.length+'</span>':'')+'<div class="secondary">'+(r.actual!==null&&r.actual!==undefined?'实际 '+e(r.actual)+' 根':'未填写线数')+(r.expected!==null&&r.expected!==undefined?' / 计划 '+e(r.expected)+' 根':'')+' · '+e(r.phase)+'</div></td><td>'+badge(r.status)+'</td><td>'+date(r.createdAt)+'</td><td>'+e(r.operator)+'</td><td>'+icon('chevron')+'</td></tr>').join('')+'</tbody></table>';
 }
+const imagePlaceholder='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+function imageUrlFromData(image) {
+  if(ogpImageUrls.has(image.id))return ogpImageUrls.get(image.id);
+  const [header,base64]=image.data.split(','),bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
+  const url=URL.createObjectURL(new Blob([bytes],{type:header.match(/data:([^;]+)/)[1]}));ogpImageUrls.set(image.id,url);return url;
+}
 function ogpImageUrl(id) {
   if(ogpImageUrls.has(id))return ogpImageUrls.get(id);
-  const image=(state.ogpImages||[]).find(p=>p.id===id)||stagedOgp?.images.find(p=>p.id===id);
-  if(!image)return '';
-  const [header,base64]=image.data.split(','),bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
-  const url=URL.createObjectURL(new Blob([bytes],{type:header.match(/data:([^;]+)/)[1]}));
-  ogpImageUrls.set(id,url);return url;
+  const image=stagedOgp?.images.find(p=>p.id===id)||(state.ogpImages||[]).find(p=>p.id===id);
+  return image?.data?imageUrlFromData(image):imagePlaceholder;
+}
+function savedPhotoSrc(photo){return photo.data||ogpImageUrls.get(photo.id)||imagePlaceholder;}
+function observeImages() {
+  imageObserver?.disconnect();
+  const load=async img=>{
+    const id=img.dataset.storedImage;if(!id)return;
+    try{
+      if(!ogpImageUrls.has(id)){
+        if(!imageLoads.has(id))imageLoads.set(id,getImageBlob(id).then(blob=>{const url=URL.createObjectURL(blob);ogpImageUrls.set(id,url);return url;}));
+        await imageLoads.get(id);
+      }
+      if(img.isConnected)img.src=ogpImageUrls.get(id);
+    }catch{if(img.isConnected)img.alt='原图读取失败，请保留数据并恢复完整备份';imageLoads.delete(id);}
+  };
+  if('IntersectionObserver' in window){imageObserver=new IntersectionObserver(items=>{for(const item of items)if(item.isIntersecting){void load(item.target);imageObserver.unobserve(item.target);}},{rootMargin:'200px'});$$('img[data-stored-image]').forEach(img=>imageObserver.observe(img));}
+  else $$('img[data-stored-image]').forEach(img=>void load(img));
+}
+function rememberField() {
+  if(ui.view!=='ogp')return;
+  saveFieldSession({moduleId:ui.ogpModule,status:ui.ogpStatus,currentId:ui.ogpCurrentId,limits:ui.ogpLimits,scrollY:window.scrollY});
+}
+function syncFieldModule(id) {
+  ui.ogpModule=id||'all';ui.ogpCurrentId='';
+  saveFieldSession({moduleId:ui.ogpModule,status:ui.ogpStatus,currentId:'',limits:ui.ogpLimits,scrollY:0});
+}
+function focusOgpRow(id,{scroll=true}={}) {
+  const row=(state.ogpRows||[]).find(r=>r.id===id);if(!row)return;
+  const group=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)).filter(r=>r.moduleId===row.moduleId),index=group.findIndex(r=>r.id===id);
+  ui.ogpLimits[row.moduleId]=Math.max(ui.ogpLimits[row.moduleId]||20,index+1);ui.ogpCurrentId=id;render();
+  const node=$('[data-detection-id="'+CSS.escape(id)+'"]');if(scroll)node?.scrollIntoView({block:'start',behavior:'instant'});rememberField();
+}
+function backupSummary(moduleId=null) {
+  const info=backupInfo?.scopes?.[moduleId||'all']||backupInfo?.scopes?.all;
+  if(!info)return '尚未导出'+(moduleId?'本模块':'完整')+'备份';
+  const scope=info.moduleId,include=r=>!scope||r.moduleId===scope;
+  const ids=new Set(info.ids||[]),items=[...state.records.filter(include).map(r=>['record:'+r.id,r]),...(state.overallRecords||[]).filter(include).map(r=>['overall:'+r.id,r]),...(state.ogpRows||[]).filter(include).map(r=>['ogp:'+r.id,r])];
+  const added=items.filter(([id])=>!ids.has(id)).length,changed=fingerprint(state,scope)!==info.fingerprint;
+  return '上次导出 '+date(info.at,true)+' · '+(scope?scope:'全部模块')+' · '+(added?'新增 '+added+' 条待备份':changed?'有更新待备份':'当前记录已导出');
+}
+function fieldPanel(rows) {
+  const current=rows.find(r=>r.id===ui.ogpCurrentId)||rows[0];ui.ogpCurrentId=current?.id||'';
+  const progress=progressFor(state.ogpRows||[],ui.ogpModule),moduleLabel=ui.ogpModule==='all'?'全部模块视图':ui.ogpModule;
+  return '<section class="field-panel" aria-label="连续检查"><div class="field-module-row"><button class="field-module mono" data-act="module">'+e(moduleLabel)+'</button><button class="text-button" data-act="module">切换模块</button></div><div class="field-current"><strong>'+(current?'W'+e(current.wire):!progress.total?'待导入':!progress.remaining?'已完成':'暂无匹配项')+'</strong><span>完成 '+progress.completed+' / '+progress.total+' · 剩余 '+progress.remaining+'</span></div><progress value="'+progress.completed+'" max="'+(progress.total||1)+'" aria-label="模块完成进度"></progress><div class="field-controls"><button class="button small" data-act="ogp-previous" '+(!current?'disabled':'')+'>上一项</button><button class="button small" data-act="ogp-next" '+(!current?'disabled':'')+'>下一项</button><form id="ogp-jump-form"><label class="sr-only" for="ogp-jump">跳转到 Wire</label><input id="ogp-jump" name="wire" inputmode="numeric" autocomplete="off" placeholder="输入 Wire" value="'+e(ui.wireJump)+'"><button class="button small" type="submit">跳转</button></form></div><div class="field-backup"><span>'+e(backupSummary(ui.ogpModule==='all'?null:ui.ogpModule))+'</span><button class="text-button" data-act="backup-module" '+(ui.ogpModule==='all'?'disabled':'')+'>备份本模块</button></div></section>';
+}
+function restoreField() {
+  const has=id=>state.modules.some(m=>m.id===id);
+  ui.ogpModule=savedField&&(savedField.moduleId==='all'||has(savedField.moduleId))?savedField.moduleId:has(state.activeModuleId)?state.activeModuleId:(state.ogpRows||[])[0]?.moduleId||'all';
+  if(savedField){ui.ogpStatus=savedField.status;ui.ogpCurrentId=savedField.currentId||'';ui.ogpLimits=savedField.limits||{};if((state.ogpRows||[]).length)ui.view='ogp';}
+}
+function restoreScroll(){if(savedField&&ui.view==='ogp')requestAnimationFrame(()=>window.scrollTo({top:Math.max(0,Number(savedField.scrollY)||0)}));}
+function recoveryPanel() {
+  return '<section class="card recovery-panel"><div class="card-head"><h2>版本与恢复</h2><span class="badge">上一版已保留</span></div><div class="card-pad"><p class="essential-note">上一版：2026.11.04 · 一键完成版。新版首次打开会保留更新前数据；切换版本时可带上当前记录和原图。</p><div class="settings-actions">'+button('previous-version','带当前记录回到上一版','reset')+button('pre-upgrade-backup','导出更新前快照','download','small')+'</div></div></section>';
 }
 function ogpImageButton(row,preview=false) {
-  return '<button class="ogp-thumbnail" data-act="ogp-image" data-id="'+e(row.id)+'" '+(preview?'data-preview="true"':'')+' aria-label="放大 '+e(row.reportedCell)+' 原始检测图片"><img src="'+ogpImageUrl(row.imageId)+'" width="160" height="120" loading="lazy" alt="'+e(row.reportedCell)+' 原始检测图，保留红色标注"><span>放大图片</span></button>';
+  return '<button class="ogp-thumbnail" data-act="ogp-image" data-id="'+e(row.id)+'" '+(preview?'data-preview="true"':'')+' aria-label="放大 '+e(row.reportedCell)+' 原始检测图片"><img data-stored-image="'+e(row.imageId)+'" src="'+ogpImageUrl(row.imageId)+'" width="160" height="120" loading="lazy" alt="'+e(row.reportedCell)+' 原始检测图，保留红色标注"><span>放大图片</span></button>';
 }
 function ogpCompletionButton(row) {
   return '<button class="button '+(row.completedAt?'small':'primary')+'" data-act="'+(row.completedAt?'ogp-reopen':'ogp-complete')+'" data-id="'+e(row.id)+'">'+(row.completedAt?'恢复到未完成':'确认修改完成')+'</button>';
 }
 function ogpPage() {
-  const all=state.ogpRows||[],duplicates=duplicateOgpWires(all),modules=[...new Set(all.map(r=>r.moduleId))].sort();
+  const all=state.ogpRows||[],duplicates=duplicateOgpWires(all),modules=state.modules.map(m=>m.id).sort();
   const rows=sortedOgpRows(filterOgpRows(all,ui.ogpModule,ui.ogpStatus));
+  const panel=fieldPanel(rows);
   const groups=modules.filter(id=>rows.some(r=>r.moduleId===id)).map(id=>{
     const group=rows.filter(r=>r.moduleId===id),limit=ui.ogpLimits[id]||20;
-    return '<section class="card ogp-module"><div class="card-head"><div><h2 class="mono">'+e(id)+'</h2><p class="small muted">'+group.length+' 条 · Wire 升序</p></div></div><div class="ogp-grid">'+group.slice(0,limit).map(r=>'<article class="ogp-item" data-detection-id="'+e(r.id)+'">'+ogpImageButton(r)+'<div class="ogp-item-info"><div class="ogp-wire-row"><b class="mono">W'+e(r.wire)+'</b><span class="badge '+(r.completedAt?'':r.status==='pending'?'amber':r.status==='anomaly'?'red':'')+'">'+(r.completedAt?'已完成':OGP_STATUSES[r.status])+'</span></div><p>'+e(r.reportedCell)+' · YOLO confidence '+r.confidence.toFixed(2)+'</p><p class="small muted">原始 W'+e(r.originalWire)+' · 第 '+r.sourcePage+' 页 / 第 '+r.sourceIndex+' 项</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+(r.note?'<p class="ogp-note">'+e(r.note)+'</p>':'')+'<div class="ogp-item-actions">'+ogpCompletionButton(r)+'<button class="button small" data-act="ogp-edit" data-id="'+e(r.id)+'">修正 Wire / 备注</button></div></div></article>').join('')+'</div>'+(group.length>limit?'<div class="card-pad"><button class="button" data-act="ogp-more" data-module="'+e(id)+'">继续显示（余 '+(group.length-limit)+' 条）</button></div>':'')+'</section>';
+    return '<section class="card ogp-module"><div class="card-head"><div><h2 class="mono">'+e(id)+'</h2><p class="small muted">'+group.length+' 条 · Wire 升序</p></div></div><div class="ogp-grid">'+group.slice(0,limit).map(r=>'<article class="ogp-item '+(r.id===ui.ogpCurrentId?'is-current':'')+'" data-detection-id="'+e(r.id)+'" tabindex="-1">'+ogpImageButton(r)+'<div class="ogp-item-info"><div class="ogp-wire-row"><b class="mono">W'+e(r.wire)+'</b><span class="badge '+(r.completedAt?'':r.status==='pending'?'amber':r.status==='anomaly'?'red':'')+'">'+(r.completedAt?'已完成':OGP_STATUSES[r.status])+'</span></div><p>'+e(r.reportedCell)+' · YOLO confidence '+r.confidence.toFixed(2)+'</p><p class="small muted">原始 W'+e(r.originalWire)+' · 第 '+r.sourcePage+' 页 / 第 '+r.sourceIndex+' 项</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+(r.note?'<p class="ogp-note">'+e(r.note)+'</p>':'')+'<div class="ogp-item-actions">'+ogpCompletionButton(r)+'<button class="button small" data-act="ogp-edit" data-id="'+e(r.id)+'">修正 Wire / 备注</button></div></div></article>').join('')+'</div>'+(group.length>limit?'<div class="card-pad"><button class="button" data-act="ogp-more" data-module="'+e(id)+'">继续显示（余 '+(group.length-limit)+' 条）</button></div>':'')+'</section>';
   }).join('');
-  return '<div class="page-title"><div><h1>OGP 待确认清单</h1><p>处理完成后点一下，直接移出待办</p></div>'+button('ogp-import','导入报告','upload','primary')+'</div>'+mobileUsageStrip()+'<div class="ogp-toolbar"><label>模块<select id="ogp-module"><option value="all">全部模块</option>'+modules.map(id=>'<option '+(ui.ogpModule===id?'selected':'')+'>'+e(id)+'</option>').join('')+'</select></label><label>清单筛选<select id="ogp-status">'+[['unfinished','未完成'],['completed','已完成'],['all','全部记录']].map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'<optgroup label="按检查结果查看未完成项">'+Object.entries(OGP_STATUSES).map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'</optgroup></select></label>'+button('ogp-export','导出清单 CSV','download','small')+button('backup','完整 JSON 备份','download','small')+'</div><p class="ogp-count">'+all.length+' 条检测 · '+all.filter(r=>!r.completedAt).length+' 条未完成 · '+all.filter(r=>r.completedAt).length+' 条已完成 · '+duplicates.size+' 条重复 Wire 待核对</p><p class="essential-note ogp-confidence">Confidence 仅为 YOLO 检测置信度，不表示异常严重程度或实际漏胶概率。CSV 包含图片 ID；图片字节请用完整 JSON 备份。</p>'+(all.length?(rows.length?groups:'<section class="card empty-state"><h3>'+(ui.ogpStatus==='unfinished'?'当前清单已全部完成':'没有符合条件的条目')+'</h3><p>可通过上方筛选查看已完成记录和原图。</p></section>'):'<section class="card empty-state"><h3>导入 OGP 报告，生成现场检查清单</h3><p>先预览模块、Wire 和原图，核对后再保存到本机。</p>'+button('ogp-import','选择 PDF / 预处理 JSON','upload','primary')+'</section>')+'<details class="quiet-details"><summary>导入记录与格式说明</summary><p>支持带文字标签的 HGCal YOLO 网格报告。续页沿用本文件上一页模块；扫描件或其他版式不会猜测导入。PDF 图片按原始分辨率无损裁取并保留标注。</p><p>重复 Cell / Wire 各自保留。清单只用于人工检查，不自动创建 Bonding 异常记录。</p>'+((state.ogpImports||[]).map(r=>'<p>'+e(r.source.name)+' · '+r.rowCount+' 条 · '+e(r.operator)+' · '+date(r.importedAt,true)+'<br><span class="mono">SHA-256 '+e(r.source.sha256)+'</span></p>').join(''))+'</details>';
+  return '<div class="page-title"><div><h1>OGP 待确认清单</h1><p>处理完成后点一下，直接移出待办</p></div>'+button('ogp-import','导入报告','upload','primary')+'</div>'+mobileUsageStrip()+panel+'<div class="ogp-toolbar"><label>模块<select id="ogp-module"><option value="all">全部模块</option>'+modules.map(id=>'<option '+(ui.ogpModule===id?'selected':'')+'>'+e(id)+'</option>').join('')+'</select></label><label>清单筛选<select id="ogp-status">'+[['unfinished','未完成'],['completed','已完成'],['all','全部记录']].map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'<optgroup label="按检查结果查看未完成项">'+Object.entries(OGP_STATUSES).map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'</optgroup></select></label>'+button('ogp-export','导出清单 CSV','download','small')+button('backup','完整 JSON 备份','download','small')+'</div><p class="ogp-count">全部模块共 '+all.length+' 条检测 · '+all.filter(r=>!r.completedAt).length+' 条未完成 · '+all.filter(r=>r.completedAt).length+' 条已完成 · '+duplicates.size+' 条重复 Wire 待核对</p><p class="essential-note ogp-confidence">Confidence 仅为 YOLO 检测置信度，不表示异常严重程度或实际漏胶概率。CSV 包含图片 ID；图片字节请用完整 JSON 备份。</p>'+(all.length?(rows.length?groups:'<section class="card empty-state"><h3>'+(ui.ogpStatus==='unfinished'?(all.some(r=>ui.ogpModule==='all'||r.moduleId===ui.ogpModule)?'当前清单已全部完成':'当前模块还没有 OGP 检测项'):'没有符合条件的条目')+'</h3><p>可通过上方筛选查看已完成记录和原图。</p></section>'):'<section class="card empty-state"><h3>导入 OGP 报告，生成现场检查清单</h3><p>先预览模块、Wire 和原图，核对后再保存到本机。</p>'+button('ogp-import','选择 PDF / 预处理 JSON','upload','primary')+'</section>')+'<details class="quiet-details"><summary>导入记录与格式说明</summary><p>支持带文字标签的 HGCal YOLO 网格报告。续页沿用本文件上一页模块；扫描件或其他版式不会猜测导入。PDF 图片按原始分辨率无损裁取并保留标注。</p><p>重复 Cell / Wire 各自保留。清单只用于人工检查，不自动创建 Bonding 异常记录。</p>'+((state.ogpImports||[]).map(r=>'<p>'+e(r.source.name)+' · '+r.rowCount+' 条 · '+e(r.operator)+' · '+date(r.importedAt,true)+'<br><span class="mono">SHA-256 '+e(r.source.sha256)+'</span></p>').join(''))+'</details>';
 }
 function ogpImportModal() {
   modalKind='ogp-import';stagedOgp=null;
@@ -240,19 +303,19 @@ function ogpImageModal(id,preview=false) {
   if(dirty&&modalKind==='ogp-edit'&&!confirm('检查结果还未保存，放弃编辑并查看原图？'))return;
   modalKind='ogp-image';
   openModal('原始检测图片',e(row.moduleId)+' · '+e(row.reportedCell)+' · W'+row.wire+' · 第 '+row.sourcePage+' 页',
-    '<div class="ogp-zoom-tools"><button class="button small" data-act="ogp-zoom" data-zoom="1">适合屏幕</button><button class="button small" data-act="ogp-zoom" data-zoom="2">2×</button><button class="button small" data-act="ogp-zoom" data-zoom="4">4×</button></div><div class="ogp-zoom-viewport"><img id="ogp-zoom-image" src="'+ogpImageUrl(row.imageId)+'" alt="完整检测原图，保留红色标注"></div><p class="essential-note">放大后可横向拖动查看；手机也可双指缩放。</p>',preview?button('ogp-preview-return','返回导入预览'):button('close-modal','返回清单')+'<button class="button small" data-act="ogp-edit" data-id="'+e(row.id)+'">修正 Wire</button>'+ogpCompletionButton(row),true);
+    '<div class="ogp-zoom-tools"><button class="button small" data-act="ogp-zoom" data-zoom="1">适合屏幕</button><button class="button small" data-act="ogp-zoom" data-zoom="2">2×</button><button class="button small" data-act="ogp-zoom" data-zoom="4">4×</button></div><div class="ogp-zoom-viewport"><img id="ogp-zoom-image" data-stored-image="'+e(row.imageId)+'" src="'+ogpImageUrl(row.imageId)+'" alt="完整检测原图，保留红色标注"></div><p class="essential-note">放大后可横向拖动查看；手机也可双指缩放。</p>',preview?button('ogp-preview-return','返回导入预览'):button('close-modal','返回清单')+'<button class="button small" data-act="ogp-edit" data-id="'+e(row.id)+'">修正 Wire</button>'+ogpCompletionButton(row),true);
   dirty=preview;
 }
 function mappingPage() {
   const cov=coverage(entries);
-  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup','完整备份','download','primary')+button('restore','恢复备份','upload')+'</div><p class="essential-note">请定期备份；完整 JSON 包含照片。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">2026.11.04 · 开发版 / OGP 清单</p></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
+  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','上一版兼容 JSON','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 包含原图，文件更小；兼容 JSON 可供上一版恢复。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">2026.11.06 · 开发版 / 连续检查</p></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
 }
 function openModal(title,subtitle,body,foot='',large=false) {
   modalEpoch++;
   returnFocus=document.activeElement;
   $('#app').inert=true; document.body.style.overflow='hidden';
   $('#overlay-root').innerHTML='<div class="modal-layer"><section class="modal '+(large?'large':'')+'" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-head"><div><h2 id="modal-title">'+title+'</h2>'+(subtitle?'<p>'+subtitle+'</p>':'')+'</div><button class="icon-button" data-act="close-modal" aria-label="关闭对话框">'+icon('close')+'</button></header><div class="modal-body">'+body+'<div id="form-error" class="form-error" role="alert"></div></div>'+(foot?'<footer class="modal-foot">'+foot+'</footer>':'')+'</section></div>';
-  dirty=false; setTimeout(()=>$('.modal-head .icon-button')?.focus(),30);
+  observeImages();dirty=false; setTimeout(()=>$('.modal-head .icon-button')?.focus(),30);
 }
 function closeModal(force=false) {
   if(!force && (photoBusy || dirty) && !confirm(photoBusy?'照片正在处理，确定放弃吗？':'尚有未保存内容，确定放弃吗？')) return;
@@ -288,7 +351,7 @@ function overallModal() {
 function overallDetail(id) {
   const r=(state.overallRecords||[]).find(x=>x.id===id);if(!r)return;
   const label={good:'整体良好',attention:'需要关注',issue:'发现异常'}[r.condition]||r.condition;
-  openModal('总体 Bonding 情况',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e(r.moduleId)+'</h3><span class="small muted">'+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+e(r.operator)+'</span></div><span class="badge">'+label+'</span></div>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<img width="110" height="90" src="'+e(p.data)+'" alt="总体 Bonding 照片 '+(i+1)+'">').join('')+'</div>',button('close-modal','关闭'),true);
+  openModal('总体 Bonding 情况',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e(r.moduleId)+'</h3><span class="small muted">'+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+e(r.operator)+'</span></div><span class="badge">'+label+'</span></div>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<img width="110" height="90" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="总体 Bonding 照片 '+(i+1)+'">').join('')+'</div>',button('close-modal','关闭'),true);
 }
 function mappingSnapshot(target,wires,side,mappingEntries=entries,mappingMeta=state.mappingMeta) {
   if(side==='back') {
@@ -318,7 +381,7 @@ function recordDetail(id) {
   modalKind='detail';
   const data=[['模块',r.moduleId],['正 / 反面',sideName(r.side)],['记录人',r.operator],['发现阶段',r.phase],['计划 / 实际线数',(r.expected??'未填')+' / '+(r.actual??'未填')],['历史单值拉力',r.force===null||r.force===undefined?'未填':r.force+' gf'],['机台程序',r.program||'未填'],[r.side==='back'?'记录方式':'映射状态',r.side==='back'?(r.wires.length?'历史记录（保留原始编号）':'按背面 cell 位置记录'):r.mapping.status==='documented'?'记录时有映射依据':'人工填写 / 待核对']];
   const pullBlock=(r.pullTests||[]).length?'<div class="divider"></div><h3>逐根拉力测试</h3><table class="mapping-table"><thead><tr><th>Wire</th><th>拉力</th><th>端点</th></tr></thead><tbody>'+r.pullTests.map(t=>'<tr><td class="mono">W'+e(t.wire)+'</td><td>'+e(t.force)+' gf</td><td>'+e(t.endpoint)+'</td></tr>').join('')+'</tbody></table>':'';
-  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+pullBlock+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(p.data)+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
+  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+pullBlock+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
 }
 function importModal() {
   modalKind='import';stagedImport=null;
@@ -326,10 +389,10 @@ function importModal() {
 }
 function restoreModal() {
   modalKind='restore';stagedBackup=null;
-  openModal('恢复完整备份','合并新模块和新记录，保留现有记录。','<div class="notice info">'+icon('info')+'<div>同 ID 的记录不会覆盖，即使备份中的版本较新也会跳过。已有用户映射时保留当前映射。JSON 备份包括照片。</div></div><div class="field" style="margin-top:18px"><label for="backup-file">选择 Bonding 工作台 JSON 备份</label><input id="backup-file" type="file" accept=".json,application/json"></div><div id="backup-preview"></div>',button('close-modal','取消')+'<button class="button primary" data-act="restore-confirm" id="restore-confirm" disabled>合并恢复</button>');
+  openModal('恢复完整备份','合并新模块和新记录，保留现有记录。','<div class="notice info">'+icon('info')+'<div>同 ID 的记录不会覆盖，即使备份中的版本较新也会跳过。已有用户映射时保留当前映射。JSON 备份包括照片。</div></div><div class="field" style="margin-top:18px"><label for="backup-file">选择完整 JSON / ZIP 或模块 ZIP 备份</label><input id="backup-file" type="file" accept=".json,.zip,application/json,application/zip"></div><div id="backup-preview"></div>',button('close-modal','取消')+'<button class="button primary" data-act="restore-confirm" id="restore-confirm" disabled>合并恢复</button>');
 }
 function download(name,content,type) {
-  const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  const blob=content instanceof Blob?content:new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 function stamp(){return new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');}
@@ -379,16 +442,48 @@ function search(value) {
 async function onAction(el) {
   const a=el.dataset.act;
   if(a==='ogp-import')ogpImportModal();
-  if(a==='ogp-complete'||a==='ogp-reopen'){
-    const id=el.dataset.id,completed=a==='ogp-complete';el.disabled=true;
+  if(a==='ogp-complete'||a==='ogp-reopen'||a==='ogp-undo'){
+    const undo=a==='ogp-undo',token=undoCompletion,id=undo?token?.id:el.dataset.id,completed=a==='ogp-complete';
+    if(!id)return;
+    const before=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),next=nextOgpRow(before,id);el.disabled=true;
+    let changed;
     try{
       await commit(s=>{
-        if(!(s.ogpRows||[]).some(r=>r.id===id))throw new Error('这条检测不存在，请刷新清单。');
-        return {...s,ogpRows:s.ogpRows.map(r=>r.id===id?setOgpCompletion(r,completed,s.modules.find(m=>m.id===r.moduleId)?.operator||r.history.at(-1).operator):r)};
+        const row=(s.ogpRows||[]).find(r=>r.id===id);if(!row)throw new Error('这条检测不存在，请刷新清单。');
+        if(undo&&(row.completedAt!==token.at||row.history.length!==token.length))throw new Error('这条记录已在其他窗口更新，请在已完成清单中核对。');
+        changed=setOgpCompletion(row,completed,s.modules.find(m=>m.id===row.moduleId)?.operator||row.history.at(-1).operator);
+        return {...s,ogpRows:s.ogpRows.map(r=>r.id===id?changed:r)};
       });
       if(modalKind==='ogp-image')closeModal(true);
-      toast(completed?'已完成，已移出未完成清单。':'已恢复到未完成清单。');
+      if(completed){undoCompletion={id,at:changed.completedAt,length:changed.history.length};if(next)focusOgpRow(next.id);else rememberField();toast('已完成，已定位下一项。',true);}
+      else{undoCompletion=null;if(undo){ui.ogpStatus='unfinished';focusOgpRow(id);}toast('已恢复到未完成清单。');}
     }finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='ogp-previous'||a==='ogp-next'){
+    const rows=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),index=rows.findIndex(r=>r.id===ui.ogpCurrentId),row=rows[index+(a==='ogp-next'?1:-1)];
+    if(row)focusOgpRow(row.id);
+  }
+  if(a==='backup-zip'||a==='backup-module'||a==='backup'){
+    const moduleId=a==='backup-module'?(ui.view==='ogp'&&ui.ogpModule!=='all'?ui.ogpModule:state.activeModuleId):null;
+    if(a==='backup-module'&&!moduleId)throw new Error('请先选择要备份的模块。');
+    el.disabled=true;
+    try{
+      toast('正在读取原图并生成完整备份…');
+      await commitQueue.catch(()=>{});
+      const full=await loadState({images:a==='backup'});
+      if(a==='backup')download('bonding-backup-'+stamp()+'.json',JSON.stringify(makeBackup(full)),'application/json');
+      else download('bonding-'+(moduleId||'all')+'-'+stamp()+'.zip',await createArchive(full,{moduleId}),'application/zip');
+      backupInfo=await noteBackup(moduleId,full);render();toast('备份已导出，包含原图；请确认文件已保存。');
+    }finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='pre-upgrade-backup'){
+    const snapshot=await checkpointBackup();download('bonding-before-upgrade-'+stamp()+'.json',JSON.stringify(makeBackup(snapshot)),'application/json');toast('已导出更新前快照，当前记录未改变。');
+  }
+  if(a==='previous-version'){
+    modalKind='recovery';openModal('回到上一版','会带上当前全部记录和原图。','<p class="essential-note">将当前数据复制到上一版，并保留上一版切换前的数据副本。请关闭其他开发版窗口后切换。之后可从上一版顶部带记录返回新版。</p>',button('close-modal','取消')+button('confirm-previous-version','保存当前数据并打开上一版','reset','primary'));
+  }
+  if(a==='confirm-previous-version'){
+    el.disabled=true;try{await commitQueue.catch(()=>{});if(navigator.locks)await navigator.locks.request('hgcal-bonding-save',()=>prepareRollback());else await prepareRollback();location.href=new URL('./previous-dev/',location.href).href;}finally{if(el.isConnected)el.disabled=false;}
   }
   if(a==='ogp-edit')ogpEditModal(el.dataset.id);
   if(a==='ogp-image')ogpImageModal(el.dataset.id,el.dataset.preview==='true');
@@ -403,10 +498,10 @@ async function onAction(el) {
   if(a==='ogp-confirm'){
     if(!stagedOgp||!$('#ogp-confirmed')?.checked){error('请先核对预览并勾选确认。');return;}
     const draft=stagedOgp;el.disabled=true;
-    try{await commit(s=>appendOgpImport(s,draft));ui.view='ogp';ui.ogpModule='all';ui.ogpStatus='unfinished';closeModal(true);render();toast('已保存 '+draft.rows.length+' 条检测及完整图片。');}
+    try{await commit(s=>appendOgpImport(s,draft));ui.view='ogp';ui.ogpModule=draft.rows.some(r=>r.moduleId===state.activeModuleId)?state.activeModuleId:draft.rows[0].moduleId;ui.ogpStatus='unfinished';await commit(s=>({...s,activeModuleId:ui.ogpModule}));closeModal(true);render();toast('已保存 '+draft.rows.length+' 条检测及完整图片。');}
     finally{if(el.isConnected)el.disabled=false;}
   }
-  if(a==='nav'){ui.view=el.dataset.view;render();window.scrollTo({top:0});}
+  if(a==='nav'){ui.view=el.dataset.view;if(ui.view==='ogp'&&ui.ogpModule!=='all'&&state.modules.some(m=>m.id===ui.ogpModule))await commit(s=>({...s,activeModuleId:ui.ogpModule}));else render();window.scrollTo({top:0});rememberField();}
   if(a==='module')moduleModal();
   if(a==='mobile-help')mobileHelpModal();
   if(a==='mobile-install'){const outcome=await promptMobileInstall();refreshMobileStatus();toast(outcome==='accepted'?'已接受安装，请从桌面 Bonding 图标打开。':outcome==='dismissed'?'已取消安装，仍可在浏览器中使用。':'请按说明通过浏览器菜单添加到主屏幕。');}
@@ -435,21 +530,21 @@ async function onAction(el) {
   if(a==='overall-detail')overallDetail(el.dataset.id);
   if(a==='select-module'){
     const after=modalKind==='module-record';
-    await commit(s=>({...s,activeModuleId:el.dataset.id}));
-    closeModal(true);toast('已切换模块 '+el.dataset.id);if(after)recordModal();
+    await commit(s=>({...s,activeModuleId:el.dataset.id}));syncFieldModule(el.dataset.id);
+    closeModal(true);render();toast('已切换模块 '+el.dataset.id);if(after)recordModal();
   }
   if(a==='record-detail')recordDetail(el.dataset.id);
   if(a==='filter'){ui.filter=el.dataset.filter;render();}
   if(a==='clear-filter'){ui.filter='all';ui.recordSearch='';ui.scope='all';render();}
   if(a==='export-csv')exportCsv();
   if(a==='export-overall-csv')exportOverallCsv();
-  if(a==='backup'){download('bonding-backup-'+stamp()+'.json',JSON.stringify(makeBackup(state)), 'application/json');toast('已导出完整备份，包含照片与处理历史。');}
+
   if(a==='restore')restoreModal();
   if(a==='restore-confirm'){
     if(!stagedBackup)return;
     const incoming=stagedBackup;let result;
-    await commit(s=>{result=mergeBackup(s,incoming);resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);return result.state;});
-    closeModal(true);toast('已补入 '+result.added+' 条记录，跳过 '+result.skipped+' 条已有记录。');
+    await commit(async s=>{result=mergeBackup(await hydrateState(s),incoming);resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);return result.state;});
+    syncFieldModule(result.state.activeModuleId);ui.ogpStatus='unfinished';saveFieldSession({moduleId:ui.ogpModule,status:'unfinished',currentId:'',limits:{},scrollY:0});closeModal(true);render();toast('已补入 '+result.added+' 条记录，跳过 '+result.skipped+' 条已有记录。');
   }
   if(a==='import-mapping')importModal();
   if(a==='mapping-template')download('bonding-mapping-example.csv','\uFEFF'+csvEncode(['side','kind','cell','wire_start','wire_end'],[['front','signal','19','403','405'],['front','shield','A','628','630']]),'text/csv;charset=utf-8');
@@ -472,9 +567,9 @@ async function onAction(el) {
   }
   if(a==='remove-photo'){pendingPhotos.splice(Number(el.dataset.index),1);dirty=true;drawDraftPhotos();}
   if(a==='view-photo'){
-    const r=state.records.find(x=>x.id===el.dataset.id),p=r?.photos[Number(el.dataset.index)];if(!p)return;
+    const r=state.records.find(x=>x.id===el.dataset.id);let p=r?.photos[Number(el.dataset.index)];if(!p)return;if(!p.data)p={...await getImage(p.id),...p,data:(await getImage(p.id)).data};
     if(dirty&&!confirm('处理说明还未保存，先放弃编辑并查看照片？'))return;
-    modalKind='photo';openModal('现场照片',e(r.target||r.wires.join(', ')),'<img class="photo-view" src="'+e(p.data)+'" alt="异常现场照片">', '<button class="button primary" data-act="record-detail" data-id="'+e(r.id)+'">返回异常详情</button>');
+    modalKind='photo';openModal('现场照片',e(r.target||r.wires.join(', ')),'<img class="photo-view" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="异常现场照片">', '<button class="button primary" data-act="record-detail" data-id="'+e(r.id)+'">返回异常详情</button>');
   }
 }
 document.addEventListener('click',event=>{const el=event.target.closest('[data-act]');if(!el||el.disabled)return;onAction(el).catch(ex=>error(ex.message||'操作未完成，请重试。'));});
@@ -493,6 +588,7 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('input',event=>{
   if(event.target.closest('.modal'))dirty=true;
   if(event.target.id==='query-input')ui.query=event.target.value;
+  if(event.target.id==='ogp-jump')ui.wireJump=event.target.value;
   if(event.target.id==='record-search'){ui.recordSearch=event.target.value;$('#record-list').innerHTML=recordsList();}
   if(['mapping-text','mapping-version'].includes(event.target.id)){stagedImport=null;$('#mapping-preview').innerHTML='';}
 });
@@ -500,16 +596,16 @@ document.addEventListener('change',async event=>{
   const epoch=modalEpoch;
   try{
     if(event.target.id==='record-scope'){ui.scope=event.target.value;render();}
-    if(event.target.id==='ogp-module'){ui.ogpModule=event.target.value;render();}
-    if(event.target.id==='ogp-status'){ui.ogpStatus=event.target.value;render();}
+    if(event.target.id==='ogp-module'){ui.ogpModule=event.target.value;ui.ogpCurrentId='';if(ui.ogpModule!=='all')await commit(s=>({...s,activeModuleId:ui.ogpModule}));else render();rememberField();}
+    if(event.target.id==='ogp-status'){ui.ogpStatus=event.target.value;ui.ogpCurrentId='';render();rememberField();}
     if(event.target.id==='mapping-file'){
       const file=event.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw new Error('映射文件请小于 2 MB。');
       $('#mapping-text').value=await file.text();$('#mapping-text').dataset.filename=file.name;stagedImport=null;$('#mapping-preview').innerHTML='';dirty=true;
     }
     if(event.target.id==='backup-file'){
-      const file=event.target.files[0];if(!file)return;if(file.size>100*1024*1024)throw new Error('备份超过 100 MB，暂不支持在此导入。');
-      stagedBackup=readBackup(await file.text());
-      const result=mergeBackup(state,stagedBackup);
+      const file=event.target.files[0];if(!file)return;if(file.size>300*1024*1024)throw new Error('备份超过 300 MB，请按模块恢复。');
+      stagedBackup=/\.zip$/i.test(file.name)?await readArchive(file):readBackup(await file.text());
+      const result=mergeBackup(await hydrateState(state),stagedBackup);
       const backupMapping=resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);
       $('#backup-preview').innerHTML='<div class="notice info" style="margin-top:18px">'+icon('check')+'<div>文件校验通过：'+stagedBackup.modules.length+' 个模块，'+stagedBackup.records.length+' 条异常，'+(stagedBackup.overallRecords||[]).length+' 条总体记录，'+(stagedBackup.ogpRows||[]).length+' 条 OGP 检测 / '+(stagedBackup.ogpImages||[]).length+' 张完整图片。<br>将补入 '+result.added+' 条；'+result.skipped+' 条同 ID 记录将跳过。'+(backupMapping.conflicts.length?'<br>另有 '+backupMapping.conflicts.length+' 个旧映射位点与当前参考表冲突；会保留原始数据，但暂停用于查号。':'')+'</div></div>';
       $('#restore-confirm').disabled=false;
@@ -521,7 +617,7 @@ document.addEventListener('change',async event=>{
       const photos=[];for(const f of files)photos.push(await photoData(f));
       if(['record','overall'].includes(modalKind)&&epoch===modalEpoch){pendingPhotos.push(...photos);dirty=true;drawDraftPhotos();toast('照片已加入，保存记录后留存在本机。');}
     }
-  }catch(ex){if(event.target.id==='backup-file'){stagedBackup=null;$('#restore-confirm').disabled=true;}error(ex.message);}
+  }catch(ex){if(event.target.id==='backup-file'){stagedBackup=null;$('#restore-confirm').disabled=true;$('#backup-preview').textContent='';}error(ex.message);}
   finally{if(['issue-photos','overall-photos'].includes(event.target.id)&&epoch===modalEpoch){photoBusy=false;const saveButton=$('#save-record')||$('#save-overall');if(saveButton)saveButton.disabled=false;event.target.value='';event.target.disabled=false;}}
 });
 document.addEventListener('submit',async event=>{
@@ -555,6 +651,11 @@ document.addEventListener('submit',async event=>{
       })}));
       closeModal(true);toast('检查结果已保存，原始 Wire 与修改记录已保留。');
     }
+    if(formId==='ogp-jump-form'){
+      const wire=Number(normalizeWire(val('wire'))),rows=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),row=rows.find(r=>Number(r.wire)===wire);
+      if(!row)throw new Error('当前清单没有 W'+wire+'，请检查模块或清单筛选。');
+      ui.wireJump=String(wire);focusOgpRow(row.id);
+    }
     if(formId==='query-form')search(val('query'));
     if(formId==='module-form'){
       const id=val('id'),operator=val('operator'),program=val('program'),after=modalKind==='module-record';
@@ -563,7 +664,7 @@ document.addEventListener('submit',async event=>{
         if(s.modules.some(m=>m.id===id))throw new Error('该模块已存在，请在上方列表中选择。');
         return {...s,modules:[...s.modules,{id,operator,program,type:'LD V3 Full',createdAt:new Date().toISOString()}],activeModuleId:id};
       });
-      closeModal(true);toast('模块已创建：'+id);if(after)recordModal();
+      syncFieldModule(id);closeModal(true);render();toast('模块已创建：'+id);if(after)recordModal();
     }
     if(formId==='overall-form'){
       if(photoBusy)throw new Error('照片仍在处理中，请稍候。');
@@ -623,15 +724,16 @@ document.addEventListener('submit',async event=>{
   }catch(ex){if(formId==='ogp-import-form'&&submitEpoch!==modalEpoch)return;error(ex.message||'保存未完成，请重试。');}
   finally{form.dataset.saving='false';if(submit?.isConnected)submit.disabled=false;}
 });
+window.addEventListener('scroll',()=>{clearTimeout(sessionTimer);sessionTimer=setTimeout(rememberField,150);},{passive:true});
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 
 try{
-  state=await loadState();updateEntries();render();
+  state=await loadState({images:false});backupInfo=await getBackupInfo();restoreField();updateEntries();render();restoreScroll();
   initMobileApp(refreshMobileStatus);
   if('BroadcastChannel' in window){
     channel=new BroadcastChannel('hgcal-bonding-updates');
-    channel.onmessage=async()=>{try{state=await loadState();updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
+    channel.onmessage=async()=>{try{state=await loadState({images:false});updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
   }
 }catch(ex){
-  $('#app').innerHTML='<div class="boot"><span class="boot-hex">⬡</span><h1>本机记录暂时无法读取</h1><p>'+e(ex.message)+'</p><p>请使用允许保存网站数据的浏览器，并刷新重试。</p></div>';
+  $('#app').innerHTML='<div class="boot"><span class="boot-hex">⬡</span><h1>本机记录暂时无法读取</h1><p>'+e(ex.message)+'</p><p>请使用允许保存网站数据的浏览器，并刷新重试。</p><p><a class="button" href="./previous-dev/">打开上一版（原记录仍保留）</a></p></div>';
 }

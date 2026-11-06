@@ -72,7 +72,7 @@ export function appendOgpImport(state, draft) {
   }
   // Repeated detections remain separate rows. Identical immutable image bytes
   // may share one image ID, keeping repeated report imports / backups compact.
-  const imageByData = new Map((state.ogpImages || []).map(image => [image.data, image.id]));
+  const imageByData = new Map((state.ogpImages || []).filter(image=>image.data).map(image => [image.data, image.id]));
   const imageIds = new Map(), newImages = [];
   for (const image of draft.images) {
     let id = imageByData.get(image.data);
@@ -121,19 +121,22 @@ export function ogpCsv(rows, reports, duplicateRows = rows) {
 }
 
 // Optional extension of schema-v1: legacy backups without these arrays remain valid.
-export function validateOgpState(state) {
+export function validateOgpState(state, {allowImageRefs=false}={}) {
   const reports = state.ogpImports === undefined ? [] : state.ogpImports, rows = state.ogpRows === undefined ? [] : state.ogpRows, images = state.ogpImages === undefined ? [] : state.ogpImages;
   if (![reports, rows, images].every(Array.isArray)) fail('OGP 保存列表无效。');
   const unique = (list, label) => { const ids = new Set(); for (const item of list) { if (!object(item) || !text(item.id, 128) || ids.has(item.id)) fail(label + ' ID 无效或重复。'); ids.add(item.id); } return ids; };
   const reportIds = unique(reports, 'OGP 导入'), imageIds = unique(images, 'OGP 图片'); unique(rows, 'OGP 检测');
-  for (const image of images) validateOgpImage(image);
+  for (const image of images) {
+    if (allowImageRefs && image.data === undefined && /^[a-f0-9]{64}$/.test(image.sha256) && Number.isInteger(image.byteLength) && image.byteLength > 0 && /^image\/(jpeg|png)$/.test(image.mime) && Number.isInteger(image.width) && Number.isInteger(image.height) && image.width > 0 && image.height > 0) continue;
+    validateOgpImage(image);
+  }
   const modules = new Set(state.modules.map(m => m.id));
   for (const report of reports) {
     validateSource(report.source);
-    if (!date(report.importedAt) || !text(report.operator, 60) || !Number.isInteger(report.rowCount) || report.rowCount < 1 || report.rowCount !== rows.filter(r => r.importId === report.id).length || !Array.isArray(report.pages) || report.pages.length !== report.source.pageCount) fail('OGP 导入记录无效。');
+    if (!date(report.importedAt) || !text(report.operator, 60) || !Number.isInteger(report.rowCount) || report.rowCount < 1 || report.rowCount !== rows.filter(r => r.importId === report.id).length || !Array.isArray(report.pages) || (report.partial ? (!Number.isInteger(report.originalRowCount) || report.originalRowCount < report.rowCount || report.pages.length > report.source.pageCount) : report.pages.length !== report.source.pageCount)) fail('OGP 导入记录无效。');
     for (const [i, page] of report.pages.entries()) {
-      const pageRows = rows.filter(r => r.importId === report.id && r.sourcePage === i + 1);
-      if (!object(page) || page.page !== i + 1 || !modules.has(page.moduleId) || page.count !== pageRows.length || page.count < 1 || pageRows.some(r => r.moduleId !== page.moduleId)) fail('OGP 分页归属无效。');
+      const pageRows = rows.filter(r => r.importId === report.id && r.sourcePage === page.page);
+      if (!object(page) || (!Number.isInteger(page.page) || page.page < 1 || page.page > report.source.pageCount || (report.partial ? (i > 0 && page.page <= report.pages[i-1].page) : page.page !== i + 1)) || !modules.has(page.moduleId) || page.count !== pageRows.length || page.count < 1 || pageRows.some(r => r.moduleId !== page.moduleId)) fail('OGP 分页归属无效。');
     }
   }
   const sourceKeys = new Set(), referencedImages = new Set();
