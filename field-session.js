@@ -2,7 +2,7 @@ const KEY='hgcal-bonding-field-session-v1';
 export function readFieldSession() {
   try {
     const value=JSON.parse(localStorage.getItem(KEY));
-    if(!value||typeof value.moduleId!=='string'||value.moduleId.length>80||!['unfinished','completed','all','pending','normal','anomaly'].includes(value.status))return null;
+    if(!value||typeof value.moduleId!=='string'||value.moduleId.length>80||!['unfinished','completed','all','pending','normal','anomaly','special','special-unfinished','special-completed'].includes(value.status))return null;
     return {...value,currentId:typeof value.currentId==='string'?value.currentId.slice(0,128):'',scrollY:Number.isFinite(value.scrollY)?Math.max(0,Math.min(value.scrollY,10000000)):0,limits:Object.fromEntries(Object.entries(value.limits||{}).filter(([key,n])=>key.length<=80&&Number.isInteger(n)&&n>0&&n<=10000))};
   }catch{return null;}
 }

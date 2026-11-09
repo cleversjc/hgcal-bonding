@@ -101,16 +101,16 @@ let browser;
   pass('All 121 native crops match independent originals and preserve red annotations',pixelResult);
   await page.screenshot({path:path.join(out,'mobile-ogp.png')});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  const first=s.rows[0];await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill('25');await page.locator('[form="ogp-edit-form"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
+  const first=s.rows[0];await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill('25');await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
   await page.locator('#ogp-reason').fill('现场 Cell 位置核对');await page.locator('#ogp-edit-operator').fill('Correction QA');await page.locator('#ogp-check-status').selectOption('normal');await page.locator('#ogp-note').fill('看图确认正常，含逗号与"引号"\n第二行备注');
-  await page.locator('[form="ogp-edit-form"]').click();await closed();
+  await page.locator('[form="ogp-edit-form"][value="save"]').click();await closed();
   s=await read();const corrected=s.rows.find(r=>r.id===first.id);assert.equal(corrected.wire,'25');assert.equal(corrected.originalWire,'211');assert.equal(corrected.history.length,2);assert.equal(corrected.history[1].operator,'Correction QA');assert.equal(corrected.status,'normal');
   assert.ok(await page.locator('.ogp-item .ogp-duplicate').count()>=2);
   await page.reload();await page.locator('.shell').waitFor();await nav('ogp');s=await read();assert.equal(s.rows.find(r=>r.id===first.id).wire,'25');assert.equal(s.images.length,121);
   for(const group of await page.locator('.ogp-module').all()){
     const wires=await group.locator('.ogp-wire-row>b').allTextContents();const nums=wires.map(w=>Number(w.slice(1)));assert.deepEqual(nums,[...nums].sort((a,b)=>a-b));
   }
-  const second=s.rows[1];await page.locator('[data-act="ogp-edit"][data-id="'+second.id+'"]').click();await page.locator('#ogp-check-status').selectOption('anomaly');await page.locator('#ogp-note').fill('现场确认异常，待处理');await page.locator('[form="ogp-edit-form"]').click();await closed();assert.equal((await read()).rows.find(r=>r.id===second.id).status,'anomaly');
+  const second=s.rows[1];await page.locator('[data-act="ogp-edit"][data-id="'+second.id+'"]').click();await page.locator('#ogp-check-status').selectOption('anomaly');await page.locator('#ogp-note').fill('现场确认异常，待处理');await page.locator('[form="ogp-edit-form"][value="save"]').click();await closed();assert.equal((await read()).rows.find(r=>r.id===second.id).status,'anomaly');
   pass('Manual correction validation, original/edited audit, duplicates and IndexedDB reload');
   await page.waitForFunction(()=>[...document.querySelectorAll('[data-mobile-status]')].some(e=>e.textContent==='离线已就绪'),null,{timeout:60000});
   await context.setOffline(true);await page.reload();await page.locator('.shell').waitFor();await nav('ogp');assert.match(await page.locator('.ogp-count').innerText(),/121 条检测/);
