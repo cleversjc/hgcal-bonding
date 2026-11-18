@@ -55,6 +55,22 @@ export function pairCaptions(captions, boxes) {
   });
 }
 
+async function readPageTextItems(page) {
+  // PDF.js 5.6's getTextContent uses stream async iteration, which some
+  // WebKit browsers lack even though they support getReader().
+  const reader = page.streamTextContent().getReader();
+  const items = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return items;
+      items.push(...value.items);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function parseOgpPdf(file, onProgress = () => {}, signal) {
   if (file.size > 30 * 1024 * 1024) throw new Error('PDF 超过 30 MB，请先使用预处理流程。');
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -76,7 +92,7 @@ export async function parseOgpPdf(file, onProgress = () => {}, signal) {
       signal?.throwIfAborted();
       onProgress('正在解析第 ' + number + ' / ' + pdf.numPages + ' 页…');
       const page = await pdf.getPage(number), viewport = page.getViewport({ scale: 1 });
-      const parsed = parseCaptionItems((await page.getTextContent()).items, viewport, previousModule);
+      const parsed = parseCaptionItems(await readPageTextItems(page), viewport, previousModule);
       const pairs = pairCaptions(parsed.captions, imageBoxes(await page.getOperatorList(), pdfjs.OPS, pdfjs.Util, viewport));
       pages.push({ page: number, moduleId: parsed.moduleId, count: pairs.length, inherited: parsed.inherited });
       previousModule = parsed.moduleId;

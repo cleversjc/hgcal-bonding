@@ -148,7 +148,8 @@ async function test() {
       };
       navigator.serviceWorker.controller.postMessage({ type: 'HGCAL_SHELL_STATUS' }, [channel.port2]);
     }));
-    assert.equal(offline.version, '2026-11-18-ogp-numbering-v1');
+    const shellVersion = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8').match(/SHELL_VERSION = '([^']+)'/)[1];
+    assert.equal(offline.version, shellVersion);
     assert.equal(offline.ready, true);
     await context.setOffline(true);
     await page.reload();
