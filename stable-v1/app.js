@@ -1,8 +1,16 @@
 import { CELL_POSITIONS, GROUP_POSITIONS, MAP_IMAGE, BUILTIN_MAPPING, GROUNDING, BACKSIDE_ORDER, DOMAIN_NOTES, REFERENCE_MAP_METADATA, REFERENCE_COORDINATES } from './domain-data.js';
 import { normalizeTarget, normalizeWire, wireKey, parseMapping, validateAgainstBuiltin, getMappings, resolveStoredMappings, lookupTarget, lookupWire, coverage, csvEncode } from './mapping.js';
-import { loadState, saveState, makeBackup, readBackup, mergeBackup } from './storage.js';
+import { loadState, saveState, makeBackup, readBackup, mergeBackup, getImage, getImageBlob, hydrateState, getBackupInfo, noteBackup, fingerprint, checkpointBackup, prepareRollback } from './storage.js';
 import { BACKSIDE_POSITIONS, renderBacksideMap } from './backside-map.js';
 import { initMobileApp, getMobileAppState, promptMobileInstall } from './mobile-app.js';
+import {
+  OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, setOgpCompletion, hasOgpSpecialHandling,
+  filterOgpRows, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest, ogpLocation,
+  pendingOgpNumberingUpdate, applyOgpNumberingUpdate
+} from './ogp.js';
+import { parseOgpPdf } from './ogp-pdf.js';
+import {createArchive,readArchive} from './archive.js';
+import {readFieldSession,saveFieldSession,nextOgpRow,progressFor} from './field-session.js';
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -40,7 +48,15 @@ const PHASES = ['绑定中','绑定前检查','绑定后目检','Pull test','电
 let state, entries = [], mappingConflicts = [], pendingPhotos = [], stagedImport = null, stagedBackup = null, recordContext = null;
 let toastTimer, returnFocus, modalKind = '', modalEpoch = 0, dirty = false, photoBusy = false, commitQueue = Promise.resolve();
 let channel;
+let stagedOgp = null, ogpController = null, ogpRowContext = null;
+let stagedOgpNumbering = null;
+const ogpImageUrls = new Map();
+const imageLoads=new Map();
+let imageObserver,backupInfo=null,undoCompletion=null,sessionTimer;
+const savedField=readFieldSession();
 const ui = {view:'lookup',side:'front',mode:'cell',target:'C19',wire:'',query:'19',zoom:1,rotated:false,backMachine:false,filter:'all',recordSearch:'',scope:'module'};
+Object.assign(ui, { ogpModule: 'all', ogpStatus: 'unfinished', ogpLimits: {} });
+Object.assign(ui,{ogpCurrentId:'',wireJump:''});
 const activeModule = () => state.modules.find(m => m.id === state.activeModuleId);
 const moduleRecords = () => state.records.filter(r => r.moduleId === state.activeModuleId && r.status !== 'void');
 const date = (v, full = false) => new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',...(full?{year:'numeric'}:{}),hour12:false}).format(new Date(v));
@@ -69,9 +85,9 @@ function mobileHelpModal() {
     '<div class="mobile-help"><div class="notice info">'+icon('check')+'<div><b data-mobile-status>'+mobileStatusLabel()+'</b><p>首次联网打开，等离线准备完成后，再从桌面图标使用。</p></div></div><div class="install-platforms"><section><h3>Android · Chrome</h3><ol><li>用 Chrome 打开本应用。</li><li>点右上角 ⋮，选择“安装和创建快捷方式”→“安装”；部分版本显示“安装应用”或“添加到主屏幕”。</li><li>确认后，从桌面 Bonding 图标打开。</li></ol></section><section><h3>iPhone · Safari</h3><ol><li>用 Safari 打开本应用。</li><li>点“共享”→“添加到主屏幕”；部分布局先打开页面菜单。</li><li>若有“作为网页 App 打开”，保持开启，再点“添加”。</li></ol></section></div><div class="local-data-note"><h3>先添加到主屏幕，再开始正式记录</h3><p>浏览器与桌面网页 App 的本地数据可能分开，尤其是 iPhone。已有记录时，先在原入口选择“映射与资料 → 完整备份”，再在新入口通过“恢复备份”导入。</p><p>模块、异常和照片只保存在当前设备的浏览器 / 网页 App 内，不会自动上传或同步。请定期导出完整 JSON 备份；清除网站数据、卸载或更换手机前先备份。记录人的姓名只是记录字段，不是账号。</p></div><div class="install-quick-start"><h3>开始使用</h3><p>选择 / 新建模块 → 正面查号或背面点选 → 记录异常 → 补充返修与复检 → 导出备份。</p></div></div>',
     button('close-modal','知道了')+'<button type="button" class="button primary" data-act="mobile-install" data-mobile-install '+(getMobileAppState().canInstall?'':'hidden')+'>安装 Bonding</button>',true);
 }
-function toast(message) {
-  $('#toast').textContent = message; $('#toast').classList.add('visible');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4000);
+function toast(message,undo=false) {
+  $('#toast').innerHTML=e(message)+(undo?' <button type="button" data-act="ogp-undo">撤销刚才操作</button>':''); $('#toast').classList.add('visible');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), undo?8000:4000);
 }
 function error(message) {
   const box = $('#form-error'); if (box) { box.textContent = message; box.scrollIntoView({block:'nearest'}); } else toast(message);
@@ -102,24 +118,25 @@ function historicalMappingMismatch(record) {
 async function commit(updater) {
   const operation = async () => {
     const work = async () => {
-      const latest = await loadState();
-      const next = updater(latest);
-      await saveState(next); state = next; updateEntries(); render();
+      const latest = await loadState({images:false});
+      const next = await updater(latest);
+      state = await saveState(next); updateEntries(); render();
       channel?.postMessage('updated');
     };
-    if (navigator.locks) await navigator.locks.request('hgcal-bonding-save', work); else await work();
+    if (navigator.locks) await navigator.locks.request('hgcal-bonding-stable-save', work); else await work();
   };
   commitQueue = commitQueue.catch(() => {}).then(operation);
   return commitQueue;
 }
 function nav(mobile = false) {
-  const items = [['lookup','编号对照','map'],['records','异常记录','log'],['mapping','映射与资料','data']];
+  const items = [['lookup','编号对照','map'],['ogp','OGP 清单','camera'],['records','异常记录','log'],['mapping','映射与资料','data']];
   return '<nav class="'+(mobile?'bottom-nav':'nav-items')+'" aria-label="主导航">' + items.map(([view,title,ic]) => '<button type="button" class="nav-btn '+(ui.view === view?'active':'')+'" data-act="nav" data-view="'+view+'" '+(ui.view===view?'aria-current="page"':'')+'>'+icon(ic)+'<span>'+title+'</span>'+(view==='records'?'<b class="nav-count">'+state.records.filter(r=>r.status!=='void').length+'</b>':'')+'</button>').join('') + '</nav>';
 }
 function render() {
   const mod = activeModule();
-  const pageTitle = {lookup:'编号对照',records:'异常记录',mapping:'映射与资料'}[ui.view];
-  $('#app').innerHTML = '<div class="shell"><aside class="sidebar"><div class="brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div>'+nav()+'</div><div class="rail-bottom"><div class="rail-scope"><strong>LD V3 / Full</strong></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumb"><b>HGCAL · LD V3</b></div><div class="mobile-brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div class="top-right"><button class="module-button" data-act="module" aria-label="选择或新建模块"><span class="module-icon">'+icon('hex')+'</span><span><span class="mono">'+e(mod?.id || '选择 / 新建模块')+'</span></span>'+icon('down')+'</button></div></header><div class="content">'+(ui.view==='lookup'?lookupPage():ui.view==='records'?recordsPage():mappingPage())+footer()+'</div></main>'+nav(true)+'</div>';
+  const pageTitle = {lookup:'编号对照',ogp:'OGP 清单',records:'异常记录',mapping:'映射与资料'}[ui.view];
+  $('#app').innerHTML = '<div class="shell"><aside class="sidebar"><div class="brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div>'+nav()+'</div><div class="rail-bottom"><div class="rail-scope"><strong>LD V3 / Full</strong></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumb"><b>HGCAL · LD V3 · 稳定版</b></div><div class="mobile-brand"><img src="assets/icon.svg" alt=""><div><strong>Bonding</strong></div></div><div class="top-right"><button class="module-button" data-act="module" aria-label="选择或新建模块"><span class="module-icon">'+icon('hex')+'</span><span><span class="mono">'+e(mod?.id || '选择 / 新建模块')+'</span></span>'+icon('down')+'</button></div></header><div class="content">'+(ui.view==='lookup'?lookupPage():ui.view==='ogp'?ogpPage():ui.view==='records'?recordsPage():mappingPage())+footer()+'</div></main>'+nav(true)+'</div>';
+  observeImages();rememberField();
 }
 function sideToggle() {
   return '<div class="side-toggle" aria-label="模块正反面"><button type="button" data-act="side" data-side="front" aria-pressed="'+(ui.side==='front')+'" class="'+(ui.side==='front'?'active':'')+'">正面</button><button type="button" data-act="side" data-side="back" aria-pressed="'+(ui.side==='back')+'" class="'+(ui.side==='back'?'active':'')+'">背面</button></div>';
@@ -140,7 +157,7 @@ function mapCard() {
     return '<section class="card map-card backside-card"><div class="card-head"><div><h2>背面位置</h2></div></div>'+renderBacksideMap({target:ui.target,machineView:ui.backMachine,flagged})+'</section>';
   } else {
     const flagged = new Set(moduleRecords().filter(r=>r.side==='front').map(r=>r.target));
-    
+
     const special = new Set([13,14,61,62,69,70,142,143,153,154,162,163]);
     const circles = CELL_POSITIONS.map(p => { const target='C'+p.cell; return '<circle class="cell-hit '+(flagged.has(target)?'flagged ':'')+(target===ui.target?'selected':'')+'" cx="'+p.x+'" cy="'+p.y+'" r="'+(special.has(p.cell)?9:24)+'" role="button" tabindex="0" aria-label="选择 Cell '+p.cell+'" data-act="target" data-target="'+target+'"><title>Cell '+p.cell+'</title></circle>'; }).join('') + GROUP_POSITIONS.map(p=>'<circle class="cell-hit '+(flagged.has(p.target)?'flagged ':'')+(p.target===ui.target?'selected':'')+'" cx="'+p.x+'" cy="'+p.y+'" r="15" role="button" tabindex="0" aria-label="选择位点 '+p.target+'" data-act="target" data-target="'+p.target+'"><title>位点 '+p.target+'</title></circle>').join('');
     body = '<div class="map-wrap"><div class="map-scroll" id="map-scroll"><svg class="cell-map" id="cell-map" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+MAP_IMAGE.width+' '+MAP_IMAGE.height+'" style="width:'+ui.zoom*100+'%" role="group" aria-label="可点选的 198 个 cell 正面示意图"><g transform="'+(ui.rotated?'rotate(180 602 536.5)':'')+'"><image href="'+MAP_IMAGE.src+'" width="'+MAP_IMAGE.width+'" height="'+MAP_IMAGE.height+'"/>'+circles+'</g></svg></div></div><div class="map-legend"><div class="legend-items"><span><i class="legend-dot sel"></i>当前选择</span>' +'<span><i class="legend-dot warn"></i>有异常记录</span><span><i class="legend-dot"></i>未标记 ≠ 合格</span></div><span>'+ (ui.rotated?'视图已旋转 180°':'教程正面视角')+'</span></div>';
@@ -179,26 +196,170 @@ function filteredRecords() {
 }
 function recordsPage() {
   const rows=state.records.filter(r=>(ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId)&&r.status!=='void');
-  return '<div class="page-title"><div><h1>异常记录</h1></div>'+button('new-record','新增记录','plus','primary title-action')+'</div><div class="stats-row">'+[['记录总数',rows.length,'log'],['待处理',rows.filter(r=>r.status==='open').length,'clock'],['待复检',rows.filter(r=>r.status==='repaired').length,'repair'],['已关闭',rows.filter(r=>r.status==='closed').length,'check']].map(([s,n,ic])=>'<div class="stat-box"><div><p>'+s+'</p><strong>'+n+'</strong></div><div class="stat-icon">'+icon(ic)+'</div></div>').join('')+'</div><section class="card"><div class="card-head"><div class="flex wrap"><h2>记录列表</h2><select id="record-scope" aria-label="模块范围" style="width:auto;min-height:31px;font-size:10px;padding:6px 9px"><option value="module" '+(ui.scope==='module'?'selected':'')+'>当前模块'+(!activeModule()?'（未选择，显示全部）':'')+'</option><option value="all" '+(ui.scope==='all'?'selected':'')+'>全部模块</option></select></div>'+button('export-csv','导出 CSV','download','small')+'</div><div class="filter-row"><div class="filter-chips">'+[['all','全部'],['open','待处理'],['repaired','待复检'],['closed','已关闭'],['void','已作废']].map(([s,t])=>'<button data-act="filter" data-filter="'+s+'" class="'+(ui.filter===s?'active':'')+'">'+t+'</button>').join('')+'</div><div class="filter-search">'+icon('search')+'<input id="record-search" aria-label="搜索异常记录" placeholder="搜索模块、cell、wire 或异常" value="'+e(ui.recordSearch)+'"></div></div><div id="record-list">'+recordsList()+'</div></section><details class="quiet-details"><summary>记录说明</summary><p>误录可在详情中改为“已作废”。作废后不计入有效异常，保留原始内容，当前不能撤销。CSV 导出当前筛选结果；照片请用完整 JSON 备份。</p></details>';
+  const overall=(state.overallRecords||[]).filter(r=>ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  return '<div class="page-title"><div><h1>Bonding 记录</h1></div><div class="flex wrap">'+button('overall-record','总体情况','camera','small')+button('new-record','新增异常','plus','primary title-action')+'</div></div><div class="stats-row">'+[['记录总数',rows.length,'log'],['待处理',rows.filter(r=>r.status==='open').length,'clock'],['待复检',rows.filter(r=>r.status==='repaired').length,'repair'],['已关闭',rows.filter(r=>r.status==='closed').length,'check']].map(([label,n,ic])=>'<div class="stat-box"><div><p>'+label+'</p><strong>'+n+'</strong></div><div class="stat-icon">'+icon(ic)+'</div></div>').join('')+'</div><section class="card"><div class="card-head"><div class="flex wrap"><h2>异常记录</h2><select id="record-scope" aria-label="模块范围" style="width:auto;min-height:31px;font-size:10px;padding:6px 9px"><option value="module" '+(ui.scope==='module'?'selected':'')+'>当前模块'+(!activeModule()?'（未选择，显示全部）':'')+'</option><option value="all" '+(ui.scope==='all'?'selected':'')+'>全部模块</option></select></div>'+button('export-csv','导出 CSV','download','small')+'</div><div class="filter-row"><div class="filter-chips">'+[['all','全部'],['open','待处理'],['repaired','待复检'],['closed','已关闭'],['void','已作废']].map(([key,label])=>'<button data-act="filter" data-filter="'+key+'" class="'+(ui.filter===key?'active':'')+'">'+label+'</button>').join('')+'</div><div class="filter-search">'+icon('search')+'<input id="record-search" aria-label="搜索异常记录" placeholder="搜索模块、cell、wire 或异常" value="'+e(ui.recordSearch)+'"></div></div><div id="record-list">'+recordsList()+'</div></section><section class="card overall-records-card"><div class="card-head"><h2>总体 Bonding 情况</h2><div class="flex wrap"><span class="small muted">'+overall.length+' 条</span>'+button('export-overall-csv','导出 CSV','download','small')+'</div></div>'+(overall.length?'<div class="overall-list">'+overall.slice(0,12).map(r=>'<button class="record-mini" data-act="overall-detail" data-id="'+e(r.id)+'"><i class="record-dot '+(r.condition==='good'?'closed':'')+'"></i><span><b>'+({good:'整体良好',attention:'需要关注',issue:'发现异常'}[r.condition])+'</b><small>'+e(r.moduleId)+' · '+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+date(r.createdAt)+'</small></span><span class="spacer"></span><span class="mono">'+r.photos.length+' 张照片</span></button>').join('')+'</div>':'<div class="card-pad small muted">还没有总体情况记录。</div>')+'</section><details class="quiet-details"><summary>记录说明</summary><p>逐根拉力测试按 Wire 保存；总体情况独立记录，不计入异常数量。照片请用完整 JSON 备份。</p></details>';
 }
 function recordsList() {
   const rows=filteredRecords();
   if(!rows.length) return '<div class="empty-state"><div class="empty-icon">'+icon('log')+'</div><h3>'+(state.records.length?'没有符合条件的记录':'暂无异常记录')+'</h3>'+button(state.records.length?'clear-filter':'new-record',state.records.length?'清除筛选':'新增异常记录','plus','primary')+'</div>';
   return '<table class="records-table"><thead><tr><th>位置 / 模块</th><th>异常与线数</th><th>状态</th><th>发现时间</th><th>记录人</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr data-act="record-detail" data-id="'+e(r.id)+'" tabindex="0" role="button" aria-label="查看 '+e(r.target||r.wires.join(','))+' '+e(r.type)+'"><td><div class="record-target">'+e(r.target || '仅 Wire')+' <span class="small muted">'+e(r.wires.map(w=>'W'+w).join(' · '))+'</span></div><div class="secondary mono">'+e(r.moduleId)+' · '+sideName(r.side)+'</div>'+'</td><td>'+e(r.type)+(r.photos.length?'<span class="photo-mark">'+icon('camera')+r.photos.length+'</span>':'')+'<div class="secondary">'+(r.actual!==null&&r.actual!==undefined?'实际 '+e(r.actual)+' 根':'未填写线数')+(r.expected!==null&&r.expected!==undefined?' / 计划 '+e(r.expected)+' 根':'')+' · '+e(r.phase)+'</div></td><td>'+badge(r.status)+'</td><td>'+date(r.createdAt)+'</td><td>'+e(r.operator)+'</td><td>'+icon('chevron')+'</td></tr>').join('')+'</tbody></table>';
 }
+const imagePlaceholder='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+function imageUrlFromData(image) {
+  if(ogpImageUrls.has(image.id))return ogpImageUrls.get(image.id);
+  const [header,base64]=image.data.split(','),bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
+  const url=URL.createObjectURL(new Blob([bytes],{type:header.match(/data:([^;]+)/)[1]}));ogpImageUrls.set(image.id,url);return url;
+}
+function ogpImageUrl(id) {
+  if(ogpImageUrls.has(id))return ogpImageUrls.get(id);
+  const image=stagedOgp?.images.find(p=>p.id===id)||(state.ogpImages||[]).find(p=>p.id===id);
+  return image?.data?imageUrlFromData(image):imagePlaceholder;
+}
+function savedPhotoSrc(photo){return photo.data||ogpImageUrls.get(photo.id)||imagePlaceholder;}
+function observeImages() {
+  imageObserver?.disconnect();
+  const load=async img=>{
+    const id=img.dataset.storedImage;if(!id)return;
+    try{
+      if(!ogpImageUrls.has(id)){
+        if(!imageLoads.has(id))imageLoads.set(id,getImageBlob(id).then(blob=>{const url=URL.createObjectURL(blob);ogpImageUrls.set(id,url);return url;}));
+        await imageLoads.get(id);
+      }
+      if(img.isConnected)img.src=ogpImageUrls.get(id);
+    }catch{if(img.isConnected)img.alt='原图读取失败，请保留数据并恢复完整备份';imageLoads.delete(id);}
+  };
+  if('IntersectionObserver' in window){imageObserver=new IntersectionObserver(items=>{for(const item of items)if(item.isIntersecting){void load(item.target);imageObserver.unobserve(item.target);}},{rootMargin:'200px'});$$('img[data-stored-image]').forEach(img=>imageObserver.observe(img));}
+  else $$('img[data-stored-image]').forEach(img=>void load(img));
+}
+function rememberField() {
+  if(ui.view!=='ogp')return;
+  saveFieldSession({moduleId:ui.ogpModule,status:ui.ogpStatus,currentId:ui.ogpCurrentId,limits:ui.ogpLimits,scrollY:window.scrollY});
+}
+function syncFieldModule(id) {
+  ui.ogpModule=id||'all';ui.ogpCurrentId='';
+  saveFieldSession({moduleId:ui.ogpModule,status:ui.ogpStatus,currentId:'',limits:ui.ogpLimits,scrollY:0});
+}
+function focusOgpRow(id,{scroll=true}={}) {
+  const row=(state.ogpRows||[]).find(r=>r.id===id);if(!row)return;
+  const group=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)).filter(r=>r.moduleId===row.moduleId),index=group.findIndex(r=>r.id===id);
+  ui.ogpLimits[row.moduleId]=Math.max(ui.ogpLimits[row.moduleId]||20,index+1);ui.ogpCurrentId=id;render();
+  const node=$('[data-detection-id="'+CSS.escape(id)+'"]');if(scroll)node?.scrollIntoView({block:'start',behavior:'instant'});rememberField();
+}
+function backupSummary(moduleId=null) {
+  const info=backupInfo?.scopes?.[moduleId||'all']||backupInfo?.scopes?.all;
+  if(!info)return '尚未导出'+(moduleId?'本模块':'完整')+'备份';
+  const scope=info.moduleId,include=r=>!scope||r.moduleId===scope;
+  const ids=new Set(info.ids||[]),items=[...state.records.filter(include).map(r=>['record:'+r.id,r]),...(state.overallRecords||[]).filter(include).map(r=>['overall:'+r.id,r]),...(state.ogpRows||[]).filter(include).map(r=>['ogp:'+r.id,r])];
+  const added=items.filter(([id])=>!ids.has(id)).length,changed=fingerprint(state,scope)!==info.fingerprint;
+  return '上次导出 '+date(info.at,true)+' · '+(scope?scope:'全部模块')+' · '+(added?'新增 '+added+' 条待备份':changed?'有更新待备份':'当前记录已导出');
+}
+function fieldPanel(rows) {
+  const current=rows.find(r=>r.id===ui.ogpCurrentId)||rows[0];ui.ogpCurrentId=current?.id||'';
+  const progress=progressFor(state.ogpRows||[],ui.ogpModule),moduleLabel=ui.ogpModule==='all'?'全部模块视图':ui.ogpModule;
+  return '<section class="field-panel" aria-label="连续检查"><div class="field-module-row"><button class="field-module mono" data-act="module">'+e(moduleLabel)+'</button><button class="text-button" data-act="module">切换模块</button></div><div class="field-current"><strong>'+(current?'W'+e(current.wire):!progress.total?'待导入':!progress.remaining?'已完成':'暂无匹配项')+'</strong><span>完成 '+progress.completed+' / '+progress.total+' · 剩余 '+progress.remaining+'</span></div><progress value="'+progress.completed+'" max="'+(progress.total||1)+'" aria-label="模块完成进度"></progress><div class="field-controls"><button class="button small" data-act="ogp-previous" '+(!current?'disabled':'')+'>上一项</button><button class="button small" data-act="ogp-next" '+(!current?'disabled':'')+'>下一项</button><form id="ogp-jump-form"><label class="sr-only" for="ogp-jump">跳转到 Wire</label><input id="ogp-jump" name="wire" inputmode="numeric" autocomplete="off" placeholder="输入 Wire" value="'+e(ui.wireJump)+'"><button class="button small" type="submit">跳转</button></form></div><div class="field-backup"><span>'+e(backupSummary(ui.ogpModule==='all'?null:ui.ogpModule))+'</span><button class="text-button" data-act="backup-module" '+(ui.ogpModule==='all'?'disabled':'')+'>备份本模块</button></div></section>';
+}
+function restoreField() {
+  const has=id=>state.modules.some(m=>m.id===id);
+  ui.ogpModule=savedField&&(savedField.moduleId==='all'||has(savedField.moduleId))?savedField.moduleId:has(state.activeModuleId)?state.activeModuleId:(state.ogpRows||[])[0]?.moduleId||'all';
+  if(savedField){ui.ogpStatus=savedField.status;ui.ogpCurrentId=savedField.currentId||'';ui.ogpLimits=savedField.limits||{};if((state.ogpRows||[]).length)ui.view='ogp';}
+}
+function restoreScroll(){if(savedField&&ui.view==='ogp')requestAnimationFrame(()=>window.scrollTo({top:Math.max(0,Number(savedField.scrollY)||0)}));}
+function recoveryPanel() {
+  return '<section class="card recovery-panel"><div class="card-head"><h2>版本与恢复</h2><span class="badge">上一版已保留</span></div><div class="card-pad"><p class="essential-note">上一版：稳定版 1.0.0。新版首次打开会保留更新前数据；切换版本时可带上当前记录和原图。</p><div class="settings-actions">'+button('previous-version','带当前记录回到上一版','reset')+button('pre-upgrade-backup','导出更新前快照','download','small')+'</div></div></section>';
+}
+function ogpImageButton(row,preview=false) {
+  return '<button class="ogp-thumbnail" data-act="ogp-image" data-id="'+e(row.id)+'" '+(preview?'data-preview="true"':'')+' aria-label="放大 '+e(row.reportedCell)+' 原始检测图片"><img data-stored-image="'+e(row.imageId)+'" src="'+ogpImageUrl(row.imageId)+'" width="160" height="120" loading="lazy" alt="'+e(row.reportedCell)+' 原始检测图，保留红色标注"><span>放大图片</span></button>';
+}
+function ogpCompletionButton(row) {
+  return '<button class="button '+(row.completedAt?'small':'primary')+'" data-act="'+(row.completedAt?'ogp-reopen':'ogp-complete')+'" data-id="'+e(row.id)+'">'+(row.completedAt?'恢复到未完成':'确认修改完成')+'</button>';
+}
+function ogpSpecialBadge(row) {
+  return hasOgpSpecialHandling(row)?'<span class="badge ogp-special">特殊处理</span>':'';
+}
+function ogpLocationLabel(row) {
+  const target = ogpLocation(row).target;
+  return row.reportedCell === target ? target : 'OGP ' + row.reportedCell + ' → ' + target;
+}
+function ogpNumberingRows() {
+  return (state.ogpRows || []).filter(row =>
+    (ui.ogpModule === 'all' || row.moduleId === ui.ogpModule) && pendingOgpNumberingUpdate(row)
+  );
+}
+function ogpNumberingNotice() {
+  const count = ogpNumberingRows().length;
+  if (!count) return '';
+  return '<div class="notice info ogp-numbering-notice"><div>有 ' + count + ' 条待办可按新版 OGP 编号更新定位。</div>' +
+    button('ogp-numbering-preview', '预览编号更新', '', 'small') + '</div>';
+}
+function ogpNumberingModal() {
+  const rows = sortedOgpRows(ogpNumberingRows());
+  if (!rows.length) return;
+  stagedOgpNumbering = new Map(rows.map(row => [row.id, row]));
+  const changes = rows.map(row => {
+    const location = pendingOgpNumberingUpdate(row);
+    return '<li><b class="mono">' + e(row.moduleId) + '</b><p>OGP ' + e(row.reportedCell) + ' → ' + e(location.target) +
+      ' · W' + e(row.wire) + ' → W' + e(location.wires[0]) + ' · 第 ' + row.sourcePage + ' 页 / ' + row.sourceIndex + ' 项</p></li>';
+  }).join('');
+  modalKind = 'ogp-numbering';
+  openModal('核对旧清单编号更新', '只应用于尚未处理、尚未修改的待办。原编号、原 Wire 和原图会保留。',
+    '<ul class="ogp-numbering-list">' + changes + '</ul>',
+    button('close-modal', '取消') + button('ogp-numbering-confirm', '确认更新 ' + rows.length + ' 条', 'check', 'primary'), true);
+}
+function ogpPage() {
+  const all=state.ogpRows||[],duplicates=duplicateOgpWires(all),modules=state.modules.map(m=>m.id).sort();
+  const rows=sortedOgpRows(filterOgpRows(all,ui.ogpModule,ui.ogpStatus));
+  const panel=fieldPanel(rows);
+  const groups=modules.filter(id=>rows.some(r=>r.moduleId===id)).map(id=>{
+    const group=rows.filter(r=>r.moduleId===id),limit=ui.ogpLimits[id]||20;
+    return '<section class="card ogp-module"><div class="card-head"><div><h2 class="mono">'+e(id)+'</h2><p class="small muted">'+group.length+' 条 · Wire 升序</p></div></div><div class="ogp-grid">'+group.slice(0,limit).map(r=>'<article class="ogp-item '+(r.id===ui.ogpCurrentId?'is-current':'')+'" data-detection-id="'+e(r.id)+'" tabindex="-1">'+ogpImageButton(r)+'<div class="ogp-item-info"><div class="ogp-wire-row"><b class="mono">W'+e(r.wire)+'</b><span class="badge '+(r.completedAt?'':r.status==='pending'?'amber':r.status==='anomaly'?'red':'')+'">'+(r.completedAt?'已完成':OGP_STATUSES[r.status])+'</span>'+ogpSpecialBadge(r)+'</div><p>'+e(ogpLocationLabel(r))+' · YOLO confidence '+r.confidence.toFixed(2)+'</p><p class="small muted">原始 W'+e(r.originalWire)+' · 第 '+r.sourcePage+' 页 / 第 '+r.sourceIndex+' 项</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+(r.note?'<p class="ogp-note">'+e(r.note)+'</p>':'')+'<div class="ogp-item-actions">'+ogpCompletionButton(r)+'<button class="button small" data-act="ogp-edit" data-id="'+e(r.id)+'">处理事项 / 修正 Wire</button></div></div></article>').join('')+'</div>'+(group.length>limit?'<div class="card-pad"><button class="button" data-act="ogp-more" data-module="'+e(id)+'">继续显示（余 '+(group.length-limit)+' 条）</button></div>':'')+'</section>';
+  }).join('');
+  return '<div class="page-title"><div><h1>OGP 待确认清单</h1><p>处理完成后点一下，直接移出待办</p></div>'+button('ogp-import','导入报告','upload','primary')+'</div>'+mobileUsageStrip()+panel+ogpNumberingNotice()+'<div class="ogp-toolbar"><label>模块<select id="ogp-module"><option value="all">全部模块</option>'+modules.map(id=>'<option '+(ui.ogpModule===id?'selected':'')+'>'+e(id)+'</option>').join('')+'</select></label><label>清单筛选<select id="ogp-status">'+[['unfinished','未完成'],['completed','已完成'],['all','全部记录'],['special','特殊处理（全部）'],['special-unfinished','特殊处理 · 未完成'],['special-completed','特殊处理 · 已完成']].map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'<optgroup label="按检查结果查看未完成项">'+Object.entries(OGP_STATUSES).map(([value,label])=>'<option value="'+value+'" '+(ui.ogpStatus===value?'selected':'')+'>'+label+'</option>').join('')+'</optgroup></select></label>'+button('ogp-export','导出清单 CSV','download','small')+button('backup','完整 JSON 备份','download','small')+'</div><p class="ogp-count">全部模块共 '+all.length+' 条检测 · '+all.filter(r=>!r.completedAt).length+' 条未完成 · '+all.filter(r=>r.completedAt).length+' 条已完成 · '+duplicates.size+' 条重复 Wire 待核对</p><p class="essential-note ogp-confidence">Confidence 仅为 YOLO 检测置信度，不表示异常严重程度或实际漏胶概率。CSV 包含图片 ID；图片字节请用完整 JSON 备份。</p>'+(all.length?(rows.length?groups:'<section class="card empty-state"><h3>'+(ui.ogpStatus==='unfinished'?(all.some(r=>ui.ogpModule==='all'||r.moduleId===ui.ogpModule)?'当前清单已全部完成':'当前模块还没有 OGP 检测项'):'没有符合条件的条目')+'</h3><p>可通过上方筛选查看已完成记录和原图。</p></section>'):'<section class="card empty-state"><h3>导入 OGP 报告，生成现场检查清单</h3><p>先预览模块、Wire 和原图，核对后再保存到本机。</p>'+button('ogp-import','选择 PDF / 预处理 JSON','upload','primary')+'</section>')+'<details class="quiet-details"><summary>导入记录与格式说明</summary><p>支持带文字标签的 HGCal YOLO 网格报告。续页沿用本文件上一页模块；扫描件或其他版式不会猜测导入。PDF 图片按原始分辨率无损裁取并保留标注。</p><p>重复 Cell / Wire 各自保留。清单只用于人工检查，不自动创建 Bonding 异常记录。</p>'+((state.ogpImports||[]).map(r=>'<p>'+e(r.source.name)+' · '+r.rowCount+' 条 · '+e(r.operator)+' · '+date(r.importedAt,true)+'<br><span class="mono">SHA-256 '+e(r.source.sha256)+'</span></p>').join(''))+'</details>';
+}
+function ogpImportModal() {
+  modalKind='ogp-import';stagedOgp=null;
+  openModal('导入 OGP 报告','解析与预览不会写入本机记录。','<form id="ogp-import-form"><div class="form-grid"><div class="field full"><label class="req" for="ogp-file">PDF / OGP 预处理 JSON</label><input id="ogp-file" name="file" type="file" accept=".pdf,.json,application/pdf,application/json" required><span class="help">支持 HGCal YOLO 文字网格报告（PDF ≤30 MB）。手机解析受限时，可在电脑上将同类报告预处理为含原图的 JSON；其他版式需适配。</span></div><div class="field full"><label class="req" for="ogp-operator">导入人</label><input id="ogp-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||'')+'"></div></div><p id="ogp-progress" role="status" class="essential-note">不会上传 PDF 或图片；解析在当前设备进行。</p></form>',button('close-modal','取消')+'<button class="button primary" type="submit" form="ogp-import-form">解析并预览</button>',true);
+}
+function showOgpPreview() {
+  if(!stagedOgp)return;
+  modalKind='ogp-preview';
+  const draft=stagedOgp,duplicates=duplicateOgpWires([...(state.ogpRows||[]),...draft.rows]);
+  const repeated=(state.ogpImports||[]).some(r=>r.source.sha256===draft.report.source.sha256);
+  const counts=[...new Set(draft.rows.map(r=>r.moduleId))].sort().map(id=>'<li><span class="mono">'+e(id)+'</span> · '+draft.rows.filter(r=>r.moduleId===id).length+' 条</li>').join('');
+  openModal('核对 OGP 导入预览',e(draft.report.source.name)+' · '+draft.report.rowCount+' 条检测 · 尚未保存','<ul class="ogp-summary">'+counts+'</ul><p class="essential-note">'+draft.report.source.pageCount+' 页已解析。按新版 OGP 编号对照定位，每条取对应 LD V3 位点的第一根 Wire。YOLO confidence 不是严重程度或漏胶概率。</p>'+(repeated?'<p class="ogp-duplicate">这份 PDF 已导入过；再次确认会保留为独立检测，并标记重复 Wire。</p>':'')+'<p class="essential-note">'+draft.rows.filter(r=>duplicates.has(r.id)).length+' 条与本次 / 已有清单的 Wire 重复，保存后仍可逐项修正。</p><details class="quiet-details"><summary>查看逐页归属</summary>'+draft.report.pages.map(p=>'<p>第 '+p.page+' 页 · '+e(p.moduleId)+' · '+p.count+' 条'+(p.inherited?'（沿用上一页模块）':'')+'</p>').join('')+'</details><div class="ogp-preview-list">'+sortedOgpRows(draft.rows).map(r=>'<article class="ogp-preview-item">'+ogpImageButton(r,true)+'<div><b class="mono">'+e(r.moduleId)+' · W'+r.wire+'</b><p>'+e(ogpLocationLabel(r))+' · YOLO confidence '+r.confidence.toFixed(2)+' · 第 '+r.sourcePage+' 页 / '+r.sourceIndex+'</p>'+(duplicates.has(r.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+'</div></article>').join('')+'</div><label class="check-label"><input id="ogp-confirmed" type="checkbox">我已核对模块归属、Wire 和原图；重复检测仍分别保存。</label>',button('close-modal','取消')+'<button class="button primary" data-act="ogp-confirm">确认保存 '+draft.rows.length+' 条</button>',true);
+  dirty=true;
+}
+function ogpEditModal(id) {
+  const row=(state.ogpRows||[]).find(r=>r.id===id);if(!row)return;
+  ogpRowContext=structuredClone(row);modalKind='ogp-edit';
+  const duplicates=duplicateOgpWires(state.ogpRows||[]);
+  openModal('处理事项 / 修正 Wire',e(row.moduleId)+' · '+e(ogpLocationLabel(row))+' · 第 '+row.sourcePage+' 页 / '+row.sourceIndex,
+    '<div class="ogp-edit-evidence">'+ogpImageButton(row)+'<div><h3 class="mono">W'+e(row.wire)+'</h3><p>原始映射 W'+e(row.originalWire)+'</p><p>YOLO confidence '+row.confidence.toFixed(2)+'</p><p class="small muted">仅检测置信度</p>'+(row.completedAt?'<p>已完成 · '+date(row.completedAt,true)+'</p>':'')+(duplicates.has(row.id)?'<p class="ogp-duplicate">重复 Wire · 请核对</p>':'')+'</div></div><form id="ogp-edit-form"><div class="form-grid"><div class="field"><label class="req" for="ogp-wire">定位 Wire</label><input id="ogp-wire" name="wire" required inputmode="numeric" value="'+e(row.wire)+'"></div><div class="field"><label for="ogp-check-status">检查结果</label><select id="ogp-check-status" name="status">'+Object.entries(OGP_STATUSES).map(([v,l])=>'<option value="'+v+'" '+(row.status===v?'selected':'')+'>'+l+'</option>').join('')+'</select></div><div class="field full"><label class="req" for="ogp-edit-operator">记录人</label><input id="ogp-edit-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||row.history.at(-1).operator)+'"></div><div class="field full"><label for="ogp-reason">Wire 修正原因（修改编号时必填）</label><input id="ogp-reason" name="reason" maxlength="1000" placeholder="例如：现场位置核对后修正"></div><div class="field full"><label for="ogp-note">处理事项 / 检查备注</label><textarea id="ogp-note" name="note" maxlength="4000">'+e(row.note)+'</textarea><span class="help">填写后自动标记为特殊处理；普通检查备注可取消下方标记。</span></div><div class="field full"><label class="check-label ogp-special-choice"><input id="ogp-special-handling" type="checkbox" name="specialHandling" '+(hasOgpSpecialHandling(row)?'checked':'')+'>特殊处理（可单独筛选）</label></div></div></form><details class="quiet-details"><summary>原始映射与修改历史（'+row.history.length+'）</summary><p>'+e(row.mapping.source)+' · '+e(row.mapping.version)+'<br>'+row.mapping.wires.map(w=>'W'+e(w)).join(' / ')+'</p>'+(row.numberingUpdate?'<p>新版编号对照：'+e(row.numberingUpdate.target)+' · '+e(row.numberingUpdate.numberingVersion)+' · 推荐 W'+e(row.numberingUpdate.wires[0])+'</p>':'')+row.history.map(h=>'<p>'+date(h.at,true)+' · '+e(h.operator)+' · W'+e(h.wire)+' · '+(h.action==='complete'?'已完成':h.action==='reopen'?'恢复为未完成':OGP_STATUSES[h.status])+'<br>'+e(h.reason)+(h.specialHandling!==undefined?'<br>特殊处理：'+(h.specialHandling?'是':'否'):'')+(h.note?'<br>'+e(h.note):'')+'</p>').join('')+'</details>',button('close-modal','取消')+'<button class="button" type="submit" form="ogp-edit-form" value="save">仅保存</button>'+(!row.completedAt?'<button id="ogp-save-complete" class="button primary" type="submit" form="ogp-edit-form" value="complete">保存并处理完毕</button>':'')+'',true);
+}
+function ogpImageModal(id,preview=false) {
+  const row=(preview?stagedOgp?.rows:state.ogpRows||[])?.find(r=>r.id===id);if(!row)return;
+  if(dirty&&modalKind==='ogp-edit'&&!confirm('检查结果还未保存，放弃编辑并查看原图？'))return;
+  modalKind='ogp-image';
+  openModal('原始检测图片',e(row.moduleId)+' · '+e(ogpLocationLabel(row))+' · W'+row.wire+' · 第 '+row.sourcePage+' 页',
+    '<div class="ogp-zoom-tools"><button class="button small" data-act="ogp-zoom" data-zoom="1">适合屏幕</button><button class="button small" data-act="ogp-zoom" data-zoom="2">2×</button><button class="button small" data-act="ogp-zoom" data-zoom="4">4×</button></div><div class="ogp-zoom-viewport"><img id="ogp-zoom-image" data-stored-image="'+e(row.imageId)+'" src="'+ogpImageUrl(row.imageId)+'" alt="完整检测原图，保留红色标注"></div><p class="essential-note">放大后可横向拖动查看；手机也可双指缩放。</p>',preview?button('ogp-preview-return','返回导入预览'):button('close-modal','返回清单')+'<button class="button small" data-act="ogp-edit" data-id="'+e(row.id)+'">修正 Wire</button>'+ogpCompletionButton(row),true);
+  dirty=preview;
+}
 function mappingPage() {
   const cov=coverage(entries);
-  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条记录</p><div class="settings-actions">'+button('backup','完整备份','download','primary')+button('restore','恢复备份','upload')+'</div><p class="essential-note">请定期备份；完整 JSON 包含照片。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">2026.11.03 · 简洁版</p></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
+  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','完整 JSON 备份','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 和 JSON 均包含原图。旧版可查看它支持的记录，OGP 等新版记录在返回新版后可继续使用。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">稳定版 1.1.0</p></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
 }
 function openModal(title,subtitle,body,foot='',large=false) {
   modalEpoch++;
   returnFocus=document.activeElement;
   $('#app').inert=true; document.body.style.overflow='hidden';
   $('#overlay-root').innerHTML='<div class="modal-layer"><section class="modal '+(large?'large':'')+'" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-head"><div><h2 id="modal-title">'+title+'</h2>'+(subtitle?'<p>'+subtitle+'</p>':'')+'</div><button class="icon-button" data-act="close-modal" aria-label="关闭对话框">'+icon('close')+'</button></header><div class="modal-body">'+body+'<div id="form-error" class="form-error" role="alert"></div></div>'+(foot?'<footer class="modal-foot">'+foot+'</footer>':'')+'</section></div>';
-  dirty=false; setTimeout(()=>$('.modal-head .icon-button')?.focus(),30);
+  observeImages();dirty=false; setTimeout(()=>$('.modal-head .icon-button')?.focus(),30);
 }
 function closeModal(force=false) {
   if(!force && (photoBusy || dirty) && !confirm(photoBusy?'照片正在处理，确定放弃吗？':'尚有未保存内容，确定放弃吗？')) return;
+  ogpController?.abort();ogpController=null;
+  const savedImages=new Set((state.ogpImages||[]).map(p=>p.id));
+  for(const [id,url] of ogpImageUrls)if(!savedImages.has(id)){URL.revokeObjectURL(url);ogpImageUrls.delete(id);}
+  stagedOgp=null;ogpRowContext=null;stagedOgpNumbering=null;
   $('#overlay-root').innerHTML=''; $('#app').inert=false; document.body.style.overflow='';
   modalEpoch++;modalKind='';dirty=false;photoBusy=false;pendingPhotos=[];stagedImport=null;stagedBackup=null;recordContext=null;
   if(returnFocus?.isConnected) returnFocus.focus();
@@ -217,7 +378,17 @@ function recordModal() {
   const locationFields=back
     ? '<div class="field full"><label class="req" for="issue-target">背面 cell 位置</label><select id="issue-target" name="target" required>'+BACKSIDE_ORDER.map((t,i)=>'<option value="'+t+'" '+(t===ui.target?'selected':'')+'>'+t+' · 参考图'+BACKSIDE_POSITIONS.find(p=>p.target===t).referenceLocation+' · 顺序 '+(i+1)+'</option>').join('')+'</select></div>'
     : '<div class="field"><label for="issue-target">实际 Cell / 位点</label><input id="issue-target" name="target" value="'+e(ui.target)+'" placeholder="C1–C198 / A–F / M–R" autocomplete="off"></div><div class="field"><label for="issue-wires">受影响的 Wire（选填）</label><input id="issue-wires" name="wires" value="'+e(ui.wire)+'" placeholder="如 403,404" autocomplete="off" inputmode="text"><span class="help">逗号分隔；留空表示整组。</span></div>';
-  openModal('记录 bonding 异常',e(activeModule().id)+' · '+sideName(ui.side),'<form id="record-form"><div class="form-grid">'+locationFields+'<div class="field full"><span class="field-label req">异常类型 *</span><div class="choice-grid">'+TYPES.map((t,i)=>'<label><input type="radio" name="type" value="'+e(t)+'" '+(!i?'checked':'')+'>'+e(t)+'</label>').join('')+'</div></div><div class="field"><label for="issue-expected">计划线数（选填）</label><input id="issue-expected" name="expected" type="number" min="0" max="100" step="1" inputmode="numeric" value="'+(back?5:entry?entry.wires.length:'')+'" placeholder="按实际计划"></div><div class="field"><label for="issue-actual">实际线数（选填）</label><input id="issue-actual" name="actual" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="当前观测根数"></div><div class="field"><label for="issue-phase">发现阶段</label><select id="issue-phase" name="phase">'+selectOptions(PHASES,'绑定中')+'</select></div><div class="field"><label class="req" for="issue-operator">记录人</label><input id="issue-operator" name="operator" required maxlength="60" value="'+e(activeModule().operator)+'"></div><div class="field"><label for="issue-force">拉力 gf（选填）</label><input id="issue-force" name="force" type="number" min="0" max="10000" step="any" inputmode="decimal" placeholder="保留测量值"></div><div class="field"><label for="issue-endpoint">位置 / 端点（选填）</label><select id="issue-endpoint" name="endpoint">'+selectOptions(['未指定','First bond','Second bond','Heel','Wire span / loop','Sensor 端','PCB 端'],'未指定')+'</select></div><div class="field full"><label for="issue-note">现象与备注</label><textarea id="issue-note" name="note" maxlength="4000" placeholder="异常现象或处理情况"></textarea></div><div class="field full"><span class="field-label">现场照片（最多 3 张）</span><label class="upload-button">'+icon('camera')+'拍照 / 选择照片<input id="issue-photos" type="file" accept="image/*" multiple capture="environment"></label><div class="photos-row" id="draft-photos"></div></div></div></form>',button('close-modal','取消')+'<button type="submit" form="record-form" id="save-record" class="button primary">'+icon('check')+'保存异常</button>',true);
+  openModal('记录 bonding 异常',e(activeModule().id)+' · '+sideName(ui.side),'<form id="record-form"><div class="form-grid">'+locationFields+'<div class="field full"><span class="field-label req">异常类型 *</span><div class="choice-grid">'+TYPES.map((t,i)=>'<label><input type="radio" name="type" value="'+e(t)+'" '+(!i?'checked':'')+'>'+e(t)+'</label>').join('')+'</div></div><div class="field"><label for="issue-expected">计划线数（选填）</label><input id="issue-expected" name="expected" type="number" min="0" max="100" step="1" inputmode="numeric" value="'+(back?5:entry?entry.wires.length:'')+'" placeholder="按实际计划"></div><div class="field"><label for="issue-actual">实际线数（选填）</label><input id="issue-actual" name="actual" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="当前观测根数"></div><div class="field"><label for="issue-phase">发现阶段</label><select id="issue-phase" name="phase">'+selectOptions(PHASES,'绑定中')+'</select></div><div class="field"><label class="req" for="issue-operator">记录人</label><input id="issue-operator" name="operator" required maxlength="60" value="'+e(activeModule().operator)+'"></div><div class="field full"><label for="issue-pull-tests">逐根拉力测试（选填）</label><textarea id="issue-pull-tests" name="pullTests" rows="4" placeholder="每行一根：W403, 5.2, Heel&#10;W404, 5.6, First bond"></textarea><span class="help">格式：Wire 编号、拉力 gf、端点（可省略）。每根线独立保存。</span></div><div class="field full"><label for="issue-note">现象与备注</label><textarea id="issue-note" name="note" maxlength="4000" placeholder="异常现象或处理情况"></textarea></div><div class="field full"><span class="field-label">现场照片（最多 3 张）</span><label class="upload-button">'+icon('camera')+'拍照 / 选择照片<input id="issue-photos" type="file" accept="image/*" multiple capture="environment"></label><div class="photos-row" id="draft-photos"></div></div></div></form>',button('close-modal','取消')+'<button type="submit" form="record-form" id="save-record" class="button primary">'+icon('check')+'保存异常</button>',true);
+}
+function overallModal() {
+  if(!activeModule()){moduleModal(false);return;}
+  modalKind='overall';pendingPhotos=[];photoBusy=false;
+  openModal('记录总体 Bonding 情况',e(activeModule().id),'<form id="overall-form"><div class="form-grid"><div class="field"><label for="overall-side">范围</label><select id="overall-side" name="side"><option value="all">整体</option><option value="front">正面</option><option value="back">背面</option></select></div><div class="field"><label for="overall-condition">总体情况</label><select id="overall-condition" name="condition"><option value="good">整体良好</option><option value="attention">需要关注</option><option value="issue">发现异常</option></select></div><div class="field full"><label class="req" for="overall-operator">记录人</label><input id="overall-operator" name="operator" required maxlength="60" value="'+e(activeModule().operator)+'"></div><div class="field full"><label for="overall-note">备注</label><textarea id="overall-note" name="note" maxlength="4000" placeholder="例如：整体 bonding 情况良好。"></textarea></div><div class="field full"><span class="field-label">整体照片（最多 6 张）</span><label class="upload-button">'+icon('camera')+'拍照 / 选择照片<input id="overall-photos" type="file" accept="image/*" multiple capture="environment"></label><div class="photos-row" id="draft-photos"></div></div></div></form>',button('close-modal','取消')+'<button type="submit" form="overall-form" id="save-overall" class="button primary">'+icon('check')+'保存总体情况</button>',true);
+}
+function overallDetail(id) {
+  const r=(state.overallRecords||[]).find(x=>x.id===id);if(!r)return;
+  const label={good:'整体良好',attention:'需要关注',issue:'发现异常'}[r.condition]||r.condition;
+  openModal('总体 Bonding 情况',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e(r.moduleId)+'</h3><span class="small muted">'+({all:'整体',front:'正面',back:'背面'}[r.side])+' · '+e(r.operator)+'</span></div><span class="badge">'+label+'</span></div>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<img width="110" height="90" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="总体 Bonding 照片 '+(i+1)+'">').join('')+'</div>',button('close-modal','关闭'),true);
 }
 function mappingSnapshot(target,wires,side,mappingEntries=entries,mappingMeta=state.mappingMeta) {
   if(side==='back') {
@@ -245,8 +416,9 @@ function checkTarget(value,side) {
 function recordDetail(id) {
   const r=state.records.find(x=>x.id===id); if(!r)return;
   modalKind='detail';
-  const data=[['模块',r.moduleId],['正 / 反面',sideName(r.side)],['记录人',r.operator],['发现阶段',r.phase],['计划 / 实际线数',(r.expected??'未填')+' / '+(r.actual??'未填')],['拉力 / 位置',(r.force===null||r.force===undefined?'未填':r.force+' gf')+' · '+r.endpoint],['机台程序',r.program||'未填'],[r.side==='back'?'记录方式':'映射状态',r.side==='back'?(r.wires.length?'历史记录（保留原始编号）':'按背面 cell 位置记录'):r.mapping.status==='documented'?'记录时有映射依据':'人工填写 / 待核对']];
-  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(p.data)+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
+  const data=[['模块',r.moduleId],['正 / 反面',sideName(r.side)],['记录人',r.operator],['发现阶段',r.phase],['计划 / 实际线数',(r.expected??'未填')+' / '+(r.actual??'未填')],['历史单值拉力',r.force===null||r.force===undefined?'未填':r.force+' gf'],['机台程序',r.program||'未填'],[r.side==='back'?'记录方式':'映射状态',r.side==='back'?(r.wires.length?'历史记录（保留原始编号）':'按背面 cell 位置记录'):r.mapping.status==='documented'?'记录时有映射依据':'人工填写 / 待核对']];
+  const pullBlock=(r.pullTests||[]).length?'<div class="divider"></div><h3>逐根拉力测试</h3><table class="mapping-table"><thead><tr><th>Wire</th><th>拉力</th><th>端点</th></tr></thead><tbody>'+r.pullTests.map(t=>'<tr><td class="mono">W'+e(t.wire)+'</td><td>'+e(t.force)+' gf</td><td>'+e(t.endpoint)+'</td></tr>').join('')+'</tbody></table>':'';
+  openModal('异常详情',date(r.createdAt,true),'<div class="record-summary"><div><h3>'+e((r.side==='back'?'背面 ':'')+(r.target||'Wire'))+'</h3><span class="small muted mono">'+e(r.wires.map(w=>'W'+w).join(' · ')||(r.side==='back'?'位置整体':'位点整体'))+'</span></div>'+badge(r.status)+'</div>'+(historicalMappingMismatch(r)?'<div class="notice" style="margin-bottom:16px">'+icon('info')+'<div>这条历史记录的 wire 与当前完整编号表不一致。原始记录和当时映射已保留，请复核后补充处理说明。</div></div>':'')+'<h3 style="margin-bottom:16px">'+e(r.type)+'</h3><dl class="detail-grid">'+data.map(([k,v])=>'<div><dt>'+k+'</dt><dd>'+e(v)+'</dd></div>').join('')+'</dl>'+pullBlock+(r.note?'<div class="detail-note">'+e(r.note)+'</div>':'')+'<div class="detail-photos">'+r.photos.map((p,i)=>'<button style="border:0;background:none;padding:0;cursor:zoom-in" data-act="view-photo" data-id="'+e(r.id)+'" data-index="'+i+'" aria-label="查看照片 '+(i+1)+'"><img width="110" height="90" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="异常现场照片 '+(i+1)+'"></button>').join('')+'</div><details class="quiet-details"><summary>记录时的编号依据</summary><p>'+e(r.mapping.version)+'<br>'+e(r.mapping.source)+'</p></details><div class="divider"></div><h3>处理时间线</h3><div class="timeline">'+r.history.map(h=>'<div class="timeline-item"><small>'+date(h.at,true)+' · '+e(h.operator)+' · '+e(STATUS[h.status])+'</small><p>'+e(h.note)+'</p></div>').join('')+'</div>'+(r.status==='void'?'<div class="notice">此记录已作废，保留原始信息供追溯。</div>':'<form id="update-form" data-id="'+e(r.id)+'"><div class="form-grid"><div class="field"><label for="update-status">更新状态</label><select id="update-status" name="status">'+Object.entries(STATUS).map(([k,v])=>'<option value="'+k+'" '+(k===r.status?'selected':'')+'>'+v+'</option>').join('')+'</select></div><div class="field"><label class="req" for="update-operator">处理 / 复检人</label><input id="update-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||r.operator)+'"></div><div class="field full"><label class="req" for="update-note">处理说明 / 复检结果</label><textarea id="update-note" name="note" maxlength="4000" required placeholder="处理情况、复检结果或作废原因"></textarea></div></div></form>'),button('close-modal','关闭')+(r.status==='void'?'':'<button type="submit" form="update-form" class="button primary">'+icon('check')+'保存处理记录</button>'),true);
 }
 function importModal() {
   modalKind='import';stagedImport=null;
@@ -254,18 +426,25 @@ function importModal() {
 }
 function restoreModal() {
   modalKind='restore';stagedBackup=null;
-  openModal('恢复完整备份','合并新模块和新记录，保留现有记录。','<div class="notice info">'+icon('info')+'<div>同 ID 的记录不会覆盖，即使备份中的版本较新也会跳过。已有用户映射时保留当前映射。JSON 备份包括照片。</div></div><div class="field" style="margin-top:18px"><label for="backup-file">选择 Bonding 工作台 JSON 备份</label><input id="backup-file" type="file" accept=".json,application/json"></div><div id="backup-preview"></div>',button('close-modal','取消')+'<button class="button primary" data-act="restore-confirm" id="restore-confirm" disabled>合并恢复</button>');
+  openModal('恢复完整备份','合并新模块和新记录，保留现有记录。','<div class="notice info">'+icon('info')+'<div>同 ID 的记录不会覆盖，即使备份中的版本较新也会跳过。已有用户映射时保留当前映射。JSON 备份包括照片。</div></div><div class="field" style="margin-top:18px"><label for="backup-file">选择完整 JSON / ZIP 或模块 ZIP 备份</label><input id="backup-file" type="file" accept=".json,.zip,application/json,application/zip"></div><div id="backup-preview"></div>',button('close-modal','取消')+'<button class="button primary" data-act="restore-confirm" id="restore-confirm" disabled>合并恢复</button>');
 }
 function download(name,content,type) {
-  const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  const blob=content instanceof Blob?content:new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 function stamp(){return new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');}
 function exportCsv() {
-  const headers=['record_id','module_id','module_type','program','side','cell_or_group','wires','anomaly','expected_wires','actual_wires','stage','pull_gf','endpoint','status','operator','created_at','updated_at','note','photo_count','mapping_status','mapping_version','mapping_source','mapping_snapshot','history'];
-  const rows=filteredRecords().map(r=>[r.id,r.moduleId,r.moduleType,r.program,r.side,r.target,r.wires.map(w=>'W'+w).join(';'),r.type,r.expected??'',r.actual??'',r.phase,r.force??'',r.endpoint,STATUS[r.status],r.operator,r.createdAt,r.updatedAt,r.note,r.photos.length,r.mapping.status,r.mapping.version,r.mapping.source,JSON.stringify(r.mapping),JSON.stringify(r.history)]);
+  const headers=['record_id','module_id','module_type','program','side','cell_or_group','wires','anomaly','expected_wires','actual_wires','stage','pull_gf','endpoint','status','operator','created_at','updated_at','note','photo_count','mapping_status','mapping_version','mapping_source','mapping_snapshot','history','pull_test_results'];
+  const rows=filteredRecords().map(r=>[r.id,r.moduleId,r.moduleType,r.program,r.side,r.target,r.wires.map(w=>'W'+w).join(';'),r.type,r.expected??'',r.actual??'',r.phase,r.force??'',r.endpoint,STATUS[r.status],r.operator,r.createdAt,r.updatedAt,r.note,r.photos.length,r.mapping.status,r.mapping.version,r.mapping.source,JSON.stringify(r.mapping),JSON.stringify(r.history),JSON.stringify(r.pullTests||[])]);
   download('bonding-records-'+stamp()+'.csv','\uFEFF'+csvEncode(headers,rows),'text/csv;charset=utf-8');
   toast('已导出 '+rows.length+' 条筛选记录；照片请使用完整备份。');
+}
+function exportOverallCsv() {
+  const rows=(state.overallRecords||[]).filter(r=>ui.scope==='all'||!state.activeModuleId||r.moduleId===state.activeModuleId);
+  const headers=['record_id','module_id','scope','condition','operator','created_at','note','photo_count'];
+  const data=rows.map(r=>[r.id,r.moduleId,r.side,r.condition,r.operator,r.createdAt,r.note,r.photos.length]);
+  download('bonding-overall-'+stamp()+'.csv','\uFEFF'+csvEncode(headers,data),'text/csv;charset=utf-8');
+  toast('已导出 '+rows.length+' 条总体情况记录；照片请使用完整 JSON 备份。');
 }
 async function photoData(file) {
   if(!file.type.startsWith('image/'))throw new Error('请选择图片文件。');
@@ -299,7 +478,92 @@ function search(value) {
 }
 async function onAction(el) {
   const a=el.dataset.act;
-  if(a==='nav'){ui.view=el.dataset.view;render();window.scrollTo({top:0});}
+  if(a==='ogp-import')ogpImportModal();
+  if(a==='ogp-complete'||a==='ogp-reopen'||a==='ogp-undo'){
+    const undo=a==='ogp-undo',token=undoCompletion,id=undo?token?.id:el.dataset.id,completed=a==='ogp-complete';
+    if(!id)return;
+    const before=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),next=nextOgpRow(before,id);el.disabled=true;
+    let changed;
+    try{
+      await commit(s=>{
+        const row=(s.ogpRows||[]).find(r=>r.id===id);if(!row)throw new Error('这条检测不存在，请刷新清单。');
+        if(undo&&(row.completedAt!==token.at||row.history.length!==token.length))throw new Error('这条记录已在其他窗口更新，请在已完成清单中核对。');
+        changed=setOgpCompletion(row,completed,s.modules.find(m=>m.id===row.moduleId)?.operator||row.history.at(-1).operator);
+        return {...s,ogpRows:s.ogpRows.map(r=>r.id===id?changed:r)};
+      });
+      if(modalKind==='ogp-image')closeModal(true);
+      if(completed){undoCompletion={id,at:changed.completedAt,length:changed.history.length};if(next)focusOgpRow(next.id);else rememberField();toast('已完成，已定位下一项。',true);}
+      else{undoCompletion=null;if(undo){ui.ogpStatus='unfinished';focusOgpRow(id);}toast('已恢复到未完成清单。');}
+    }finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='ogp-previous'||a==='ogp-next'){
+    const rows=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),index=rows.findIndex(r=>r.id===ui.ogpCurrentId),row=rows[index+(a==='ogp-next'?1:-1)];
+    if(row)focusOgpRow(row.id);
+  }
+  if(a==='backup-zip'||a==='backup-module'||a==='backup'){
+    const moduleId=a==='backup-module'?(ui.view==='ogp'&&ui.ogpModule!=='all'?ui.ogpModule:state.activeModuleId):null;
+    if(a==='backup-module'&&!moduleId)throw new Error('请先选择要备份的模块。');
+    el.disabled=true;
+    try{
+      toast('正在读取原图并生成完整备份…');
+      await commitQueue.catch(()=>{});
+      const full=await loadState({images:a==='backup'});
+      if(a==='backup')download('bonding-backup-'+stamp()+'.json',JSON.stringify(makeBackup(full)),'application/json');
+      else download('bonding-'+(moduleId||'all')+'-'+stamp()+'.zip',await createArchive(full,{moduleId}),'application/zip');
+      backupInfo=await noteBackup(moduleId,full);render();toast('备份已导出，包含原图；请确认文件已保存。');
+    }finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='pre-upgrade-backup'){
+    const snapshot=await checkpointBackup();download('bonding-before-upgrade-'+stamp()+'.json',JSON.stringify(makeBackup(snapshot)),'application/json');toast('已导出更新前快照，当前记录未改变。');
+  }
+  if(a==='previous-version'){
+    modalKind='recovery';openModal('回到稳定版 1.0.0','会带上当前全部记录和原图。','<p class="essential-note">请关闭其他稳定版窗口再切换。旧版可继续使用它支持的异常记录，OGP 与总体记录会在返回新版后显示。上一版切换前的数据另有副本。</p>',button('close-modal','取消')+button('confirm-previous-version','保存当前数据并打开上一版','reset','primary'));
+  }
+  if(a==='confirm-previous-version'){
+    el.disabled=true;try{await commitQueue.catch(()=>{});if(navigator.locks)await navigator.locks.request('hgcal-bonding-stable-save',()=>prepareRollback());else await prepareRollback();location.href=new URL('./previous-stable/',location.href).href;}finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='ogp-edit')ogpEditModal(el.dataset.id);
+  if(a==='ogp-numbering-preview')ogpNumberingModal();
+  if(a==='ogp-numbering-confirm'&&stagedOgpNumbering){
+    const expected = stagedOgpNumbering;
+    el.disabled = true;
+    try {
+      await commit(s => {
+        let updated = 0;
+        const rows = s.ogpRows.map(row => {
+          const preview = expected.get(row.id);
+          if (!preview) return row;
+          if (row.updatedAt !== preview.updatedAt || row.wire !== preview.wire) throw new Error('待办已在其他窗口更新，请重新预览。');
+          updated++;
+          const operator = s.modules.find(module => module.id === row.moduleId)?.operator || row.history[0].operator;
+          return applyOgpNumberingUpdate(row, operator);
+        });
+        if (updated !== expected.size) throw new Error('待办列表已变化，请重新预览。');
+        return {...s, ogpRows: rows};
+      });
+      closeModal(true);
+      rememberField();
+      toast('已更新 ' + expected.size + ' 条 OGP 待办的定位编号。');
+    } finally {
+      if (el.isConnected) el.disabled = false;
+    }
+  }
+  if(a==='ogp-image')ogpImageModal(el.dataset.id,el.dataset.preview==='true');
+  if(a==='ogp-preview-return')showOgpPreview();
+  if(a==='ogp-zoom')$('#ogp-zoom-image').style.width=(Number(el.dataset.zoom)*100)+'%';
+  if(a==='ogp-more'){ui.ogpLimits[el.dataset.module]=(ui.ogpLimits[el.dataset.module]||20)+20;render();}
+  if(a==='ogp-export'){
+    const rows=filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus);
+    download('bonding-ogp-'+stamp()+'.csv',ogpCsv(rows,state.ogpImports||[],state.ogpRows||[]),'text/csv;charset=utf-8');
+    toast('已导出 '+rows.length+' 条检测；图片字节请用完整 JSON 备份。');
+  }
+  if(a==='ogp-confirm'){
+    if(!stagedOgp||!$('#ogp-confirmed')?.checked){error('请先核对预览并勾选确认。');return;}
+    const draft=stagedOgp;el.disabled=true;
+    try{await commit(s=>appendOgpImport(s,draft));ui.view='ogp';ui.ogpModule=draft.rows.some(r=>r.moduleId===state.activeModuleId)?state.activeModuleId:draft.rows[0].moduleId;ui.ogpStatus='unfinished';await commit(s=>({...s,activeModuleId:ui.ogpModule}));closeModal(true);render();toast('已保存 '+draft.rows.length+' 条检测及完整图片。');}
+    finally{if(el.isConnected)el.disabled=false;}
+  }
+  if(a==='nav'){ui.view=el.dataset.view;if(ui.view==='ogp'&&ui.ogpModule!=='all'&&state.modules.some(m=>m.id===ui.ogpModule))await commit(s=>({...s,activeModuleId:ui.ogpModule}));else render();window.scrollTo({top:0});rememberField();}
   if(a==='module')moduleModal();
   if(a==='mobile-help')mobileHelpModal();
   if(a==='mobile-install'){const outcome=await promptMobileInstall();refreshMobileStatus();toast(outcome==='accepted'?'已接受安装，请从桌面 Bonding 图标打开。':outcome==='dismissed'?'已取消安装，仍可在浏览器中使用。':'请按说明通过浏览器菜单添加到主屏幕。');}
@@ -324,22 +588,25 @@ async function onAction(el) {
   }
   if(a==='rotate'){ui.rotated=!ui.rotated;render();}
   if(a==='new-record')recordModal();
+  if(a==='overall-record')overallModal();
+  if(a==='overall-detail')overallDetail(el.dataset.id);
   if(a==='select-module'){
     const after=modalKind==='module-record';
-    await commit(s=>({...s,activeModuleId:el.dataset.id}));
-    closeModal(true);toast('已切换模块 '+el.dataset.id);if(after)recordModal();
+    await commit(s=>({...s,activeModuleId:el.dataset.id}));syncFieldModule(el.dataset.id);
+    closeModal(true);render();toast('已切换模块 '+el.dataset.id);if(after)recordModal();
   }
   if(a==='record-detail')recordDetail(el.dataset.id);
   if(a==='filter'){ui.filter=el.dataset.filter;render();}
   if(a==='clear-filter'){ui.filter='all';ui.recordSearch='';ui.scope='all';render();}
   if(a==='export-csv')exportCsv();
-  if(a==='backup'){download('bonding-backup-'+stamp()+'.json',JSON.stringify(makeBackup(state)), 'application/json');toast('已导出完整备份，包含照片与处理历史。');}
+  if(a==='export-overall-csv')exportOverallCsv();
+
   if(a==='restore')restoreModal();
   if(a==='restore-confirm'){
     if(!stagedBackup)return;
     const incoming=stagedBackup;let result;
-    await commit(s=>{result=mergeBackup(s,incoming);resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);return result.state;});
-    closeModal(true);toast('已补入 '+result.added+' 条记录，跳过 '+result.skipped+' 条已有记录。');
+    await commit(async s=>{result=mergeBackup(await hydrateState(s),incoming);resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);return result.state;});
+    syncFieldModule(result.state.activeModuleId);ui.ogpStatus='unfinished';saveFieldSession({moduleId:ui.ogpModule,status:'unfinished',currentId:'',limits:{},scrollY:0});closeModal(true);render();toast('已补入 '+result.added+' 条记录，跳过 '+result.skipped+' 条已有记录。');
   }
   if(a==='import-mapping')importModal();
   if(a==='mapping-template')download('bonding-mapping-example.csv','\uFEFF'+csvEncode(['side','kind','cell','wire_start','wire_end'],[['front','signal','19','403','405'],['front','shield','A','628','630']]),'text/csv;charset=utf-8');
@@ -362,9 +629,9 @@ async function onAction(el) {
   }
   if(a==='remove-photo'){pendingPhotos.splice(Number(el.dataset.index),1);dirty=true;drawDraftPhotos();}
   if(a==='view-photo'){
-    const r=state.records.find(x=>x.id===el.dataset.id),p=r?.photos[Number(el.dataset.index)];if(!p)return;
+    const r=state.records.find(x=>x.id===el.dataset.id);let p=r?.photos[Number(el.dataset.index)];if(!p)return;if(!p.data)p={...await getImage(p.id),...p,data:(await getImage(p.id)).data};
     if(dirty&&!confirm('处理说明还未保存，先放弃编辑并查看照片？'))return;
-    modalKind='photo';openModal('现场照片',e(r.target||r.wires.join(', ')),'<img class="photo-view" src="'+e(p.data)+'" alt="异常现场照片">', '<button class="button primary" data-act="record-detail" data-id="'+e(r.id)+'">返回异常详情</button>');
+    modalKind='photo';openModal('现场照片',e(r.target||r.wires.join(', ')),'<img class="photo-view" src="'+e(savedPhotoSrc(p))+'" data-stored-image="'+e(p.id||'')+'" alt="异常现场照片">', '<button class="button primary" data-act="record-detail" data-id="'+e(r.id)+'">返回异常详情</button>');
   }
 }
 document.addEventListener('click',event=>{const el=event.target.closest('[data-act]');if(!el||el.disabled)return;onAction(el).catch(ex=>error(ex.message||'操作未完成，请重试。'));});
@@ -383,6 +650,8 @@ document.addEventListener('keydown',event=>{
 document.addEventListener('input',event=>{
   if(event.target.closest('.modal'))dirty=true;
   if(event.target.id==='query-input')ui.query=event.target.value;
+  if(event.target.id==='ogp-jump')ui.wireJump=event.target.value;
+  if(event.target.id==='ogp-note'&&event.target.value.trim())$('#ogp-special-handling').checked=true;
   if(event.target.id==='record-search'){ui.recordSearch=event.target.value;$('#record-list').innerHTML=recordsList();}
   if(['mapping-text','mapping-version'].includes(event.target.id)){stagedImport=null;$('#mapping-preview').innerHTML='';}
 });
@@ -390,35 +659,77 @@ document.addEventListener('change',async event=>{
   const epoch=modalEpoch;
   try{
     if(event.target.id==='record-scope'){ui.scope=event.target.value;render();}
+    if(event.target.id==='ogp-module'){ui.ogpModule=event.target.value;ui.ogpCurrentId='';if(ui.ogpModule!=='all')await commit(s=>({...s,activeModuleId:ui.ogpModule}));else render();rememberField();}
+    if(event.target.id==='ogp-status'){ui.ogpStatus=event.target.value;ui.ogpCurrentId='';render();rememberField();}
     if(event.target.id==='mapping-file'){
       const file=event.target.files[0];if(!file)return;if(file.size>2*1024*1024)throw new Error('映射文件请小于 2 MB。');
       $('#mapping-text').value=await file.text();$('#mapping-text').dataset.filename=file.name;stagedImport=null;$('#mapping-preview').innerHTML='';dirty=true;
     }
     if(event.target.id==='backup-file'){
-      const file=event.target.files[0];if(!file)return;if(file.size>100*1024*1024)throw new Error('备份超过 100 MB，暂不支持在此导入。');
-      stagedBackup=readBackup(await file.text());
-      const result=mergeBackup(state,stagedBackup);
+      const file=event.target.files[0];if(!file)return;if(file.size>300*1024*1024)throw new Error('备份超过 300 MB，请按模块恢复。');
+      stagedBackup=/\.zip$/i.test(file.name)?await readArchive(file):readBackup(await file.text());
+      const result=mergeBackup(await hydrateState(state),stagedBackup);
       const backupMapping=resolveStoredMappings(BUILTIN_MAPPING,result.state.importedMapping);
-      $('#backup-preview').innerHTML='<div class="notice info" style="margin-top:18px">'+icon('check')+'<div>文件校验通过：'+stagedBackup.modules.length+' 个模块，'+stagedBackup.records.length+' 条记录。<br>将补入 '+result.added+' 条；'+result.skipped+' 条同 ID 记录将跳过。'+(backupMapping.conflicts.length?'<br>另有 '+backupMapping.conflicts.length+' 个旧映射位点与当前参考表冲突；会保留原始数据，但暂停用于查号。':'')+'</div></div>';
+      $('#backup-preview').innerHTML='<div class="notice info" style="margin-top:18px">'+icon('check')+'<div>文件校验通过：'+stagedBackup.modules.length+' 个模块，'+stagedBackup.records.length+' 条异常，'+(stagedBackup.overallRecords||[]).length+' 条总体记录，'+(stagedBackup.ogpRows||[]).length+' 条 OGP 检测 / '+(stagedBackup.ogpImages||[]).length+' 张完整图片。<br>将补入 '+result.added+' 条；'+result.skipped+' 条同 ID 记录将跳过。'+(backupMapping.conflicts.length?'<br>另有 '+backupMapping.conflicts.length+' 个旧映射位点与当前参考表冲突；会保留原始数据，但暂停用于查号。':'')+'</div></div>';
       $('#restore-confirm').disabled=false;
     }
-    if(event.target.id==='issue-photos'){
-      const files=[...event.target.files];if(files.length+pendingPhotos.length>3)throw new Error('每条异常最多保存 3 张照片。');
-      photoBusy=true;event.target.disabled=true;$('#save-record').disabled=true;toast('正在处理照片…');
+    if(event.target.id==='issue-photos'||event.target.id==='overall-photos'){
+      const files=[...event.target.files],limit=modalKind==='overall'?6:3;if(files.length+pendingPhotos.length>limit)throw new Error('照片数量超过上限（'+limit+' 张）。');
+      const saveButton=$('#save-record')||$('#save-overall');
+      photoBusy=true;event.target.disabled=true;if(saveButton)saveButton.disabled=true;toast('正在处理照片…');
       const photos=[];for(const f of files)photos.push(await photoData(f));
-      if(modalKind==='record'&&epoch===modalEpoch){pendingPhotos.push(...photos);dirty=true;drawDraftPhotos();toast('照片已加入，保存异常后留存在本机。');}
+      if(['record','overall'].includes(modalKind)&&epoch===modalEpoch){pendingPhotos.push(...photos);dirty=true;drawDraftPhotos();toast('照片已加入，保存记录后留存在本机。');}
     }
-  }catch(ex){if(event.target.id==='backup-file'){stagedBackup=null;$('#restore-confirm').disabled=true;}error(ex.message);}
-  finally{if(event.target.id==='issue-photos'&&epoch===modalEpoch){photoBusy=false;if($('#save-record'))$('#save-record').disabled=false;event.target.value='';event.target.disabled=false;}}
+  }catch(ex){if(event.target.id==='backup-file'){stagedBackup=null;$('#restore-confirm').disabled=true;$('#backup-preview').textContent='';}error(ex.message);}
+  finally{if(['issue-photos','overall-photos'].includes(event.target.id)&&epoch===modalEpoch){photoBusy=false;const saveButton=$('#save-record')||$('#save-overall');if(saveButton)saveButton.disabled=false;event.target.value='';event.target.disabled=false;}}
 });
 document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target,formId=form.getAttribute('id');
   if(form.dataset.saving==='true')return;
   form.dataset.saving='true';
-  const fd=new FormData(form),val=n=>String(fd.get(n)??'').trim();
-  const submit=$('[type="submit"][form="'+formId+'"]')||$('button[type="submit"]',form);if(submit)submit.disabled=true;
+  const fd=new FormData(form),val=n=>String(fd.get(n)??'').trim(),submitEpoch=modalEpoch;
+  const submits=$$('button[type="submit"]').filter(button=>button.form===form);for(const button of submits)button.disabled=true;
   if($('#form-error'))$('#form-error').textContent='';
   try{
+    if(formId==='ogp-import-form'){
+      const file=$('#ogp-file').files[0],operator=val('operator'),epoch=modalEpoch;
+      if(!file||!operator)throw new Error('请选择报告并填写导入人。');
+      if(file.size>100*1024*1024)throw new Error('导入文件超过 100 MB。');
+      ogpController?.abort();ogpController=new AbortController();
+      const signal=ogpController.signal;
+      const progress=message=>{if(epoch===modalEpoch&&$('#ogp-progress'))$('#ogp-progress').textContent=message;};
+      progress('正在读取报告…');
+      const manifest=/\.json$/i.test(file.name)?validateManifest(JSON.parse(await file.text())):await parseOgpPdf(file,progress,signal);
+      signal.throwIfAborted();
+      if(epoch!==modalEpoch)return;
+      stagedOgp=prepareOgpImport(manifest,operator);ogpController=null;showOgpPreview();
+    }
+    if(formId==='ogp-edit-form'){
+      if(!ogpRowContext)throw new Error('检查上下文已关闭，请重新打开。');
+      const context=ogpRowContext,complete=event.submitter?.value==='complete';
+      const values={wire:val('wire'),status:val('status'),operator:val('operator'),note:val('note'),reason:val('reason'),specialHandling:fd.has('specialHandling')};
+      const next=nextOgpRow(sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),context.id);
+      let changed;
+      await commit(s=>{
+        const row=(s.ogpRows||[]).find(r=>r.id===context.id);
+        if(!row)throw new Error('这条检测不存在，请刷新清单。');
+        if(row.updatedAt!==context.updatedAt||row.history.length!==context.history.length)throw new Error('此检测已在其他窗口更新，请重新打开后核对。');
+        const now=new Date().toISOString(),edited=editOgpRow(row,values,now);
+        changed=complete?setOgpCompletion(edited,true,values.operator,now):edited;
+        return {...s,ogpRows:s.ogpRows.map(r=>r.id===context.id?changed:r)};
+      });
+      closeModal(true);
+      if(complete&&!context.completedAt){
+        undoCompletion={id:context.id,at:changed.completedAt,length:changed.history.length};
+        if(next)focusOgpRow(next.id);else rememberField();
+        toast('处理事项已保存，并已标记完成。',true);
+      }else toast('检查结果已保存，原始 Wire 与修改记录已保留。');
+    }
+    if(formId==='ogp-jump-form'){
+      const wire=Number(normalizeWire(val('wire'))),rows=sortedOgpRows(filterOgpRows(state.ogpRows||[],ui.ogpModule,ui.ogpStatus)),row=rows.find(r=>Number(r.wire)===wire);
+      if(!row)throw new Error('当前清单没有 W'+wire+'，请检查模块或清单筛选。');
+      ui.wireJump=String(wire);focusOgpRow(row.id);
+    }
     if(formId==='query-form')search(val('query'));
     if(formId==='module-form'){
       const id=val('id'),operator=val('operator'),program=val('program'),after=modalKind==='module-record';
@@ -427,7 +738,14 @@ document.addEventListener('submit',async event=>{
         if(s.modules.some(m=>m.id===id))throw new Error('该模块已存在，请在上方列表中选择。');
         return {...s,modules:[...s.modules,{id,operator,program,type:'LD V3 Full',createdAt:new Date().toISOString()}],activeModuleId:id};
       });
-      closeModal(true);toast('模块已创建：'+id);if(after)recordModal();
+      syncFieldModule(id);closeModal(true);render();toast('模块已创建：'+id);if(after)recordModal();
+    }
+    if(formId==='overall-form'){
+      if(photoBusy)throw new Error('照片仍在处理中，请稍候。');
+      const operator=val('operator');if(!operator)throw new Error('请填写记录人。');
+      const now=new Date().toISOString(),record={id:uniqueId(),moduleId:activeModule().id,side:val('side'),condition:val('condition'),operator,note:val('note'),photos:[...pendingPhotos],createdAt:now};
+      await commit(s=>({...s,overallRecords:[...(s.overallRecords||[]),record]}));
+      closeModal(true);toast('总体 Bonding 情况已保存在本机。');
     }
     if(formId==='record-form'){
       if(photoBusy)throw new Error('照片仍在处理中，请稍候。');
@@ -439,13 +757,23 @@ document.addEventListener('submit',async event=>{
       if(wires.length>30)throw new Error('单条记录最多关联 30 根 wire。');
       if(new Set(wires.map(wireKey)).size!==wires.length)throw new Error('Wire 编号有重复，请核对。');
       const number=n=>val(n)===''?null:Number(val(n));
-      const expected=number('expected'),actual=number('actual'),force=number('force'),operator=val('operator');
+      const expected=number('expected'),actual=number('actual'),force=null,operator=val('operator');
+      const pullTests=val('pullTests').split(String.fromCharCode(10)).map(x=>x.trim()).filter(Boolean).map((line,i)=>{
+        const parts=line.split(/[,，]+/).map(x=>x.trim());
+        if(parts.length<2||parts.length>3)throw new Error('第 '+(i+1)+' 行格式应为：Wire 编号, 拉力 gf, 端点（可省略）。');
+        const wire=normalizeWire(parts[0]),value=Number(parts[1]),endpoint=parts[2]||'未指定';
+        if(!Number.isFinite(value)||value<0||value>10000)throw new Error('W'+wire+' 的拉力值必须是 0–10000 gf。');
+        return {wire,force:value,endpoint};
+      });
+      if(pullTests.length>30)throw new Error('单条记录最多填写 30 根拉力测试线。');
+      if(new Set(pullTests.map(x=>wireKey(x.wire))).size!==pullTests.length)throw new Error('逐根拉力测试中有重复 Wire 编号。');
+      for(const test of pullTests){const mapped=lookupWire(context.entries,test.wire,context.side);if(target&&mapped&&mapped.target!==target)throw new Error('W'+test.wire+' 对应 '+mapped.target+'，与当前位点 '+target+' 不一致。');const targetEntry=target?lookupTarget(context.entries,target,context.side):null;if(targetEntry&&!targetEntry.wires.some(w=>wireKey(w)===wireKey(test.wire)))throw new Error('W'+test.wire+' 不属于 '+target+'。');}
       if(!operator)throw new Error('请填写记录人。');
       if([expected,actual].some(n=>n!==null&&(!Number.isInteger(n)||n<0||n>100)))throw new Error('线数必须是 0–100 的整数。');
       if(force!==null&&(!Number.isFinite(force)||force<0||force>10000))throw new Error('请填写有效的拉力数值。');
       const now=new Date().toISOString(),mod=context.module;
       const snapshot=mappingSnapshot(target,wires,context.side,context.entries,context.mappingMeta);
-      const record={id:uniqueId(),moduleId:mod.id,moduleType:mod.type,program:mod.program,side:context.side,target,wires,type:val('type'),expected,actual,phase:val('phase'),force,endpoint:val('endpoint'),operator,note:val('note'),photos:[...pendingPhotos],status:'open',createdAt:now,updatedAt:now,mapping:snapshot,history:[{at:now,operator,status:'open',note:'创建异常记录'}]};
+      const record={id:uniqueId(),moduleId:mod.id,moduleType:mod.type,program:mod.program,side:context.side,target,wires,type:val('type'),expected,actual,phase:val('phase'),force,endpoint:val('endpoint')||'未指定',pullTests,operator,note:val('note'),photos:[...pendingPhotos],status:'open',createdAt:now,updatedAt:now,mapping:snapshot,history:[{at:now,operator,status:'open',note:'创建异常记录'}]};
       await commit(s=>{if(!s.modules.some(m=>m.id===mod.id))throw new Error('原模块不存在，请重新选择模块。');return {...s,records:[...s.records,record]};});
       closeModal(true);toast('异常已保存在此设备。');
     }
@@ -467,18 +795,22 @@ document.addEventListener('submit',async event=>{
       $('#mapping-preview').innerHTML='<div class="notice info" style="margin-top:17px">'+icon('check')+'<div>校验通过：'+parsed.stats.entries+' 个位点、'+parsed.stats.wires+' 根 wire。<br>合并后信号映射覆盖 '+cov.signalCells+' / 198 cells。</div></div><div class="import-preview"><table class="mapping-table"><thead><tr><th>面</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+parsed.entries.slice(0,10).map(r=>'<tr><td>'+sideName(r.side)+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">'+e(r.wires.map(w=>'W'+w).join(', '))+'</td></tr>').join('')+'</tbody></table></div><label class="check-label"><input type="checkbox" id="mapping-confirmed">我已核对：这份映射适用于当前 LD V3 完整模块及实际程序。本次导入会替换此前的用户映射，保留教程明确的关系；已有异常保留记录时映射。</label>'+button('confirm-mapping','确认导入','check','primary wide')+'<p class="small muted" style="margin-top:9px;font-size:10px">校验检查格式与已知冲突；用户仍需核对原始机台文件。</p>';
       $('#mapping-preview').scrollIntoView({block:'nearest'});
     }
-  }catch(ex){error(ex.message||'保存未完成，请重试。');}
-  finally{form.dataset.saving='false';if(submit?.isConnected)submit.disabled=false;}
+  }catch(ex){if(formId==='ogp-import-form'&&submitEpoch!==modalEpoch)return;error(ex.message||'保存未完成，请重试。');}
+  finally{form.dataset.saving='false';for(const button of submits)if(button.isConnected)button.disabled=false;}
 });
+window.addEventListener('scroll',()=>{clearTimeout(sessionTimer);sessionTimer=setTimeout(rememberField,150);},{passive:true});
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 
 try{
-  state=await loadState();updateEntries();render();
+  const readInitialState = () => loadState({ images: false });
+  // Serialize the first copy and the return from 1.0.0 with both versions' saves.
+  state = navigator.locks ? await navigator.locks.request('hgcal-bonding-stable-save', readInitialState) : await readInitialState();
+  backupInfo=await getBackupInfo();restoreField();updateEntries();render();restoreScroll();
   initMobileApp(refreshMobileStatus);
   if('BroadcastChannel' in window){
-    channel=new BroadcastChannel('hgcal-bonding-updates');
-    channel.onmessage=async()=>{try{state=await loadState();updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
+    channel=new BroadcastChannel('hgcal-bonding-stable-updates');
+    channel.onmessage=async()=>{try{state=await loadState({images:false});updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
   }
 }catch(ex){
-  $('#app').innerHTML='<div class="boot"><span class="boot-hex">⬡</span><h1>本机记录暂时无法读取</h1><p>'+e(ex.message)+'</p><p>请使用允许保存网站数据的浏览器，并刷新重试。</p></div>';
+  $('#app').innerHTML='<div class="boot"><span class="boot-hex">⬡</span><h1>本机记录暂时无法读取</h1><p>'+e(ex.message)+'</p><p>请使用允许保存网站数据的浏览器，并刷新重试。</p><p><a class="button" href="./previous-stable/">打开上一版（原记录仍保留）</a></p></div>';
 }

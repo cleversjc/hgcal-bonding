@@ -4,16 +4,55 @@
  * in mobile-app.js. Do not call skipWaiting: open pages/drafts keep their
  * current shell until all pages using the previous worker have closed.
  */
-const SHELL_VERSION = 'stable-1.0.0';
+const SHELL_VERSION = 'stable-1.1.0';
 const CACHE_PREFIX = 'hgcal-bonding-stable-v1-shell-';
 const CACHE_NAME = CACHE_PREFIX + SHELL_VERSION;
 const SCOPE = new URL('./', self.registration.scope);
 const FILES = [
-  'index.html', 'app.js', 'mobile-app.js', 'domain-data.js',
-  'channel-map-data.js', 'mapping.js', 'storage.js', 'styles.css', 'compact.css',
-  'backside-map.js', 'backside-map.css', 'manifest.webmanifest',
-  'assets/icon.svg', 'assets/icon-192.png', 'assets/icon-512.png',
-  'assets/cell-reference.png', 'assets/backside-reference.png'
+  'index.html',
+  'app.js',
+  'mobile-app.js',
+  'domain-data.js',
+  'channel-map-data.js',
+  'mapping.js',
+  'storage.js',
+  'styles.css',
+  'compact.css',
+  'backside-map.js',
+  'backside-map.css',
+  'manifest.webmanifest',
+  'assets/icon.svg',
+  'assets/icon-192.png',
+  'assets/icon-512.png',
+  'assets/cell-reference.png',
+  'assets/backside-reference.png',
+  'ogp.js',
+  'ogp-pdf.js',
+  'ogp.css',
+  'vendor/pdfjs/pdf.min.mjs',
+  'vendor/pdfjs/pdf.worker.min.mjs',
+  'persistence.js',
+  'archive.js',
+  'field-session.js',
+  'vendor/zip/jszip.min.js',
+  'previous-stable/index.html',
+  'previous-stable/app.js',
+  'previous-stable/mobile-app.js',
+  'previous-stable/domain-data.js',
+  'previous-stable/channel-map-data.js',
+  'previous-stable/mapping.js',
+  'previous-stable/storage.js',
+  'previous-stable/styles.css',
+  'previous-stable/compact.css',
+  'previous-stable/backside-map.js',
+  'previous-stable/backside-map.css',
+  'previous-stable/manifest.webmanifest',
+  'previous-stable/assets/icon.svg',
+  'previous-stable/assets/icon-192.png',
+  'previous-stable/assets/icon-512.png',
+  'previous-stable/assets/cell-reference.png',
+  'previous-stable/assets/backside-reference.png',
+  'previous-stable/sw.js',
 ];
 const URLS = FILES.map(path => new URL(path, SCOPE).href);
 const ALLOWED = new Set(URLS);
@@ -30,13 +69,13 @@ async function validShellResponse(response, url) {
   if (!response.ok || response.type === 'opaque') return false;
   if (response.url && new URL(response.url).origin !== SCOPE.origin) return false;
   const contentType = response.headers.get('content-type') || '';
-  if (url === INDEX_URL) {
+  if (url.endsWith('.html')) {
     if (!contentType.includes('text/html')) return false;
     const html = await response.clone().text();
     // Never save a hosting sign-in/error page as the offline application.
     return /id=["']app["']/.test(html) && /src=["']\.\/app\.js["']/.test(html);
   }
-  if (/\.js$/.test(url)) return /(?:java|ecma)script/i.test(contentType);
+  if (/\.(?:mjs|js)$/.test(url)) return /(?:java|ecma)script/i.test(contentType);
   if (/\.css$/.test(url)) return contentType.includes('text/css');
   if (/\.(?:png|svg)$/.test(url)) return contentType.startsWith('image/');
   return !contentType.includes('text/html');
@@ -80,6 +119,7 @@ function cacheKey(request) {
   if (url.origin !== SCOPE.origin) return null;
   const plain = url.origin + url.pathname;
   if (plain === SCOPE.href || plain === INDEX_URL) return INDEX_URL;
+  if (plain === new URL('previous-stable/',SCOPE).href) return new URL('previous-stable/index.html',SCOPE).href;
   return ALLOWED.has(plain) ? plain : null;
 }
 
@@ -105,7 +145,7 @@ self.addEventListener('message', event => {
   if (event.data?.type !== 'HGCAL_SHELL_STATUS' || !event.ports?.[0]) return;
   event.waitUntil((async () => {
     event.ports[0].postMessage({
-      type: 'HGCAL_SHELL_STATUS', version: SHELL_VERSION,
+      type: 'HGCAL_SHELL_STATUS', version: event.source?.url?.includes('/previous-stable/')?'previous-stable-1.0.0':SHELL_VERSION,
       ready: await shellReady()
     });
   })());

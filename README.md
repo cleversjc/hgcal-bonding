@@ -80,7 +80,7 @@ LD V3 bonding 编号查询、异常记录与模块总体情况记录工具。
 
 开发版地址：https://cleversjc.github.io/hgcal-bonding/
 
-稳定版 v1.0.0：https://cleversjc.github.io/hgcal-bonding/stable-v1/ （冻结；独立数据库、缓存和作用域）
+稳定版 1.1.0 的入口为 <https://cleversjc.github.io/hgcal-bonding/stable-v1/>。升级与回退说明见 [稳定版发布说明](stable-v1/RELEASE.md)。
 
 ## 使用
 1. 选择或新建 Module ID。
