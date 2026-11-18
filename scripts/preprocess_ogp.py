@@ -17,7 +17,17 @@ from pathlib import Path
 import pymupdf
 
 MODULE = re.compile(r"320[A-Z0-9]{12}(?![A-Z0-9])")
-LABEL = re.compile(r"cell\s+(\d+)\s+conf\s+(0(?:\.\d+)?|1(?:\.0+)?)", re.I)
+LABEL = re.compile(r"cell\s+(C?\d+|[A-FM-R])\s+conf\s+(0(?:\.\d+)?|1(?:\.0+)?)", re.I)
+
+
+def normalize_cell(label: str) -> str:
+    label = label.upper()
+    if label in ("A", "B", "C", "D", "E", "F", "M", "N", "O", "P", "Q", "R"):
+        return label
+    number = int(label.removeprefix("C"))
+    if not 1 <= number <= 198:
+        raise ValueError(f"OGP Cell outside C1–C198: {label!r}")
+    return f"C{number}"
 
 
 def convert(source: Path, assets: Path | None = None):
@@ -39,9 +49,9 @@ def convert(source: Path, assets: Path | None = None):
                 headings.extend(found)
             if re.search(r"\bcell\b", value, re.I):
                 match = LABEL.fullmatch(value)
-                if not match or not 1 <= int(match[1]) <= 198:
+                if not match:
                     raise ValueError(f"Page {page_number}: unsupported caption {value!r}")
-                labels.append((line["spans"][0]["origin"], f"C{int(match[1])}", float(match[2]), value))
+                labels.append((line["spans"][0]["origin"], normalize_cell(match[1]), float(match[2]), value))
         if len(set(headings)) > 1:
             raise ValueError(f"Page {page_number}: ambiguous module")
         module_id = headings[0] if headings else previous

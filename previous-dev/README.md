@@ -10,7 +10,10 @@ The banner link hands later legacy edits back to the new app via IndexedDB.
 App/mapping/reference assets remain byte-identical to the pinned source.
 Runtime adaptations are limited to independent service-worker/installation
 identifiers, the return banner/bridge, and scoped-report backup compatibility
-in storage.js/ogp.js. See source-manifest.json for original file hashes.
+in storage.js/ogp.js. The OGP validator accepts the updated numbering snapshot,
+lettered locations and W1–W630 so these records can be carried back and edited.
+The previous interface retains its original mapping for numeric OGP imports.
+See source-manifest.json for original file hashes.
 
 The root shell also caches this snapshot, allowing a first offline return before
 the dedicated snapshot worker installs. stable-v1 is a separate, unchanged app.

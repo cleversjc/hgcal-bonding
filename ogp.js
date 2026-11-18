@@ -1,15 +1,68 @@
 import { BUILTIN_MAPPING } from './domain-data.js';
-import { csvEncode, normalizeWire } from './mapping.js';
+import { csvEncode, normalizeTarget, normalizeWire } from './mapping.js';
 
 export const OGP_STATUSES = { pending: '待确认', normal: '正常', anomaly: '确认异常' };
 export const OGP_PARSER = 'hgcal-yolo-grid-v1';
+export const OGP_NUMBERING_VERSION = '2026-11-18';
+
+// OGP report labels are distinct from the LD V3 database location IDs.
+const OGP_TO_DATABASE = Object.freeze({
+  C3: 'M',
+  C13: 'C14',
+  C28: 'N',
+  C61: 'C62',
+  C66: 'R',
+  C81: 'C96',
+  C85: 'C69',
+  C140: 'O',
+  C142: 'C143',
+  C169: 'Q',
+  C196: 'P'
+});
+const frontLocations = new Map(BUILTIN_MAPPING.filter(entry => entry.side === 'front').map(entry => [entry.target, entry]));
 const uid = () => crypto.randomUUID();
 const fail = message => { throw new Error(message); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max = 4000, empty = false) => typeof value === 'string' && value.length <= max && (empty || !!value.trim());
 const date = value => text(value, 64) && Number.isFinite(Date.parse(value));
-const wire = value => typeof value === 'string' && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 594;
-const cell = value => typeof value === 'string' && /^C[1-9]\d{0,2}$/.test(value) && Number(value.slice(1)) <= 198;
+const wire = value => typeof value === 'string' && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 630;
+const cell = value => frontLocations.has(value);
+
+export function normalizeOgpCell(value) {
+  const target = normalizeTarget(value);
+  if (!cell(target)) fail('OGP 编号应为 C1–C198、A–F 或 M–R。');
+  return target;
+}
+
+function correctedOgpTarget(reportedCell) {
+  return OGP_TO_DATABASE[reportedCell] ?? reportedCell;
+}
+
+function mappedOgpLocation(reportedCell) {
+  const target = correctedOgpTarget(reportedCell);
+  const entry = frontLocations.get(target);
+  if (!entry?.wires.length) fail(reportedCell + ' 没有 LD V3 映射，未保存任何检测。');
+  return { target, wires: entry.wires.map(String), source: entry.source, version: entry.version, numberingVersion: OGP_NUMBERING_VERSION };
+}
+
+export function ogpLocation(row) {
+  return row.numberingUpdate ?? row.mapping;
+}
+
+export function pendingOgpNumberingUpdate(row) {
+  if (row.completedAt || row.status !== 'pending' || row.history.length !== 1 || row.wire !== row.originalWire || row.note || row.specialHandling) return null;
+  return correctedOgpTarget(row.reportedCell) === ogpLocation(row).target ? null : mappedOgpLocation(row.reportedCell);
+}
+
+export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOString()) {
+  const location = pendingOgpNumberingUpdate(row);
+  if (!location) fail('这条检测已处理或已更新编号，请重新预览。');
+  const edited = editOgpRow(row, {
+    wire: location.wires[0], status: row.status, operator, note: row.note,
+    reason: 'OGP 编号对照 ' + location.numberingVersion + '：' + row.reportedCell + ' → ' + location.target + '，W' + row.wire + ' → W' + location.wires[0]
+  }, now);
+  return { ...edited, numberingUpdate: location };
+}
 
 export function validateOgpImage(image) {
   if (!object(image) || !text(image.name, 1024, true) || !Number.isInteger(image.width) || !Number.isInteger(image.height) || image.width < 1 || image.height < 1 || image.width > 4096 || image.height > 4096) fail('OGP 图片信息无效。');
@@ -48,17 +101,16 @@ export function prepareOgpImport(manifest, operator, now = new Date().toISOStrin
   if (!text(operator, 60)) fail('请填写导入人。');
   const importId = uid(), images = [], rows = [];
   for (const detection of manifest.detections) {
-    const entry = BUILTIN_MAPPING.find(e => e.side === 'front' && e.target === detection.cell);
-    if (!entry?.wires.length) fail(detection.cell + ' 没有 LD V3 映射，未保存任何检测。');
-    const originalWire = String(Number(entry.wires[0])), imageId = uid();
+    const mapping = mappedOgpLocation(detection.cell);
+    const originalWire = mapping.wires[0], imageId = uid();
     images.push({ ...detection.image, id: imageId });
     rows.push({
       id: uid(), importId, moduleId: detection.moduleId, reportedCell: detection.cell,
       confidence: detection.confidence, sourcePage: detection.page, sourceIndex: detection.index,
       caption: detection.caption, imageId, originalWire, wire: originalWire,
-      mapping: { target: entry.target, wires: entry.wires.map(String), source: entry.source, version: entry.version },
+      mapping,
       status: 'pending', note: '', createdAt: now, updatedAt: now,
-      history: [{ at: now, operator, wire: originalWire, status: 'pending', note: '', reason: '导入；LD V3 对应列表中的第一根 Wire' }]
+      history: [{ at: now, operator, wire: originalWire, status: 'pending', note: '', reason: '导入；按 OGP 编号对照 ' + mapping.numberingVersion + ' 定位 ' + mapping.target + '，取 LD V3 第一根 Wire' }]
     });
   }
   return { report: { id: importId, source: { ...manifest.source }, pages: structuredClone(manifest.pages), rowCount: rows.length, operator, importedAt: now }, rows, images };
@@ -85,7 +137,7 @@ export function appendOgpImport(state, draft) {
 
 export function editOgpRow(row, values, now = new Date().toISOString()) {
   const editedWire = String(Number(normalizeWire(values.wire)));
-  if (!wire(editedWire)) fail('定位 Wire 应为 W1–W594。');
+  if (!wire(editedWire)) fail('定位 Wire 应为 W1–W630。');
   if (!Object.hasOwn(OGP_STATUSES, values.status) || !text(values.operator, 60) || !text(values.note, 4000, true) || !text(values.reason, 1000, true)) fail('请填写有效的状态、记录人及备注。');
   if (editedWire !== row.wire && !values.reason.trim()) fail('修改 Wire 时请填写修正原因。');
   if (values.specialHandling !== undefined && typeof values.specialHandling !== 'boolean') fail('特殊处理标记无效。');
@@ -130,8 +182,18 @@ export function duplicateOgpWires(rows) {
 export function ogpCsv(rows, reports, duplicateRows = rows) {
   const sources = new Map(reports.map(r => [r.id, r.source]));
   const duplicates = duplicateOgpWires(duplicateRows);
-  return '\uFEFF' + csvEncode(['detection_id','import_id','module_id','ogp_cell','original_wire','wire','yolo_confidence','status','note','image_id','source_pdf','source_sha256','source_page','source_index','duplicate_wire_review','mapping_snapshot','created_at','updated_at','audit_history','completed_at','completed_by','special_handling'],
-    sortedOgpRows(rows).map(r => [r.id, r.importId, r.moduleId, r.reportedCell, r.originalWire, r.wire, r.confidence, r.status, r.note, r.imageId, sources.get(r.importId)?.name || '', sources.get(r.importId)?.sha256 || '', r.sourcePage, r.sourceIndex, duplicates.has(r.id), JSON.stringify(r.mapping), r.createdAt, r.updatedAt, JSON.stringify(r.history), r.completedAt || '', r.completedBy || '', hasOgpSpecialHandling(r)]));
+  return '\uFEFF' + csvEncode(['detection_id','import_id','module_id','ogp_cell','original_wire','wire','yolo_confidence','status','note','image_id','source_pdf','source_sha256','source_page','source_index','duplicate_wire_review','mapping_snapshot','created_at','updated_at','audit_history','completed_at','completed_by','special_handling','mapped_target','ogp_numbering_version'],
+    sortedOgpRows(rows).map(r => [r.id, r.importId, r.moduleId, r.reportedCell, r.originalWire, r.wire, r.confidence, r.status, r.note, r.imageId, sources.get(r.importId)?.name || '', sources.get(r.importId)?.sha256 || '', r.sourcePage, r.sourceIndex, duplicates.has(r.id), JSON.stringify(r.mapping), r.createdAt, r.updatedAt, JSON.stringify(r.history), r.completedAt || '', r.completedBy || '', hasOgpSpecialHandling(r), ogpLocation(r).target, ogpLocation(r).numberingVersion || '']));
+}
+
+function validMapping(mapping, reportedCell) {
+  if (!object(mapping) || !cell(mapping.target) || !Array.isArray(mapping.wires) || !mapping.wires.length ||
+      !mapping.wires.every(wire) || !text(mapping.source, 2048) || !text(mapping.version, 1024)) return false;
+  if (mapping.numberingVersion === undefined) return mapping.target === reportedCell;
+  if (mapping.numberingVersion !== OGP_NUMBERING_VERSION) return text(mapping.numberingVersion, 64);
+  const expected = frontLocations.get(correctedOgpTarget(reportedCell));
+  return mapping.target === expected.target &&
+    mapping.wires.length === expected.wires.length && mapping.wires.every((value, index) => value === expected.wires[index]);
 }
 
 // Optional extension of schema-v1: legacy backups without these arrays remain valid.
@@ -158,7 +220,9 @@ export function validateOgpState(state, {allowImageRefs=false}={}) {
     if (!reportIds.has(row.importId) || !modules.has(row.moduleId) || !cell(row.reportedCell) || !wire(row.wire) || !wire(row.originalWire) || !Number.isFinite(row.confidence) || row.confidence < 0 || row.confidence > 1 || !Object.hasOwn(OGP_STATUSES, row.status) || !text(row.note, 4000, true) || !text(row.caption, 200) || !imageIds.has(row.imageId) || !date(row.createdAt) || !date(row.updatedAt) || !Number.isInteger(row.sourcePage) || row.sourcePage < 1 || !Number.isInteger(row.sourceIndex) || row.sourceIndex < 1) fail('OGP 检测保存字段无效。');
     const key = row.importId + ':' + row.sourcePage + ':' + row.sourceIndex;
     if (sourceKeys.has(key)) fail('OGP 来源序号重复。'); sourceKeys.add(key); referencedImages.add(row.imageId);
-    if (!object(row.mapping) || row.mapping.target !== row.reportedCell || !Array.isArray(row.mapping.wires) || !row.mapping.wires.length || row.mapping.wires.some(w => !wire(w)) || row.mapping.wires[0] !== row.originalWire || !text(row.mapping.source, 2048) || !text(row.mapping.version, 1024)) fail('OGP 原始映射快照无效。');
+    if (!validMapping(row.mapping, row.reportedCell) || row.mapping.wires[0] !== row.originalWire) fail('OGP 原始映射快照无效。');
+    const update = row.numberingUpdate;
+    if (update !== undefined && (!validMapping(update, row.reportedCell) || !text(update.numberingVersion, 64))) fail('OGP 编号更新快照无效。');
     if (!Array.isArray(row.history) || !row.history.length) fail('OGP 修改记录缺失。');
     for (const item of [row, ...row.history]) if (item?.specialHandling !== undefined && typeof item.specialHandling !== 'boolean') fail('OGP 特殊处理标记无效。');
     for (const event of row.history) if (!object(event) || !date(event.at) || !text(event.operator, 60) || !wire(event.wire) || !Object.hasOwn(OGP_STATUSES, event.status) || !text(event.note, 4000, true) || !text(event.reason, 1000)) fail('OGP 修改记录无效。');

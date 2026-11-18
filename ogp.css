@@ -2,6 +2,11 @@
 .ogp-toolbar label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--muted)}
 .ogp-toolbar select{min-height:44px;padding:8px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;max-width:100%;font-size:14px}
 .ogp-count{font-size:14px;line-height:1.8}
+.ogp-numbering-notice{margin-bottom:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.ogp-numbering-notice .button{min-height:44px}
+.ogp-numbering-list{list-style:none;padding:0}
+.ogp-numbering-list li{padding:12px 0;border-bottom:1px solid var(--line)}
+.ogp-numbering-list p{margin-top:4px;font-size:13px;line-height:1.6}
 .ogp-confidence{margin:10px 0 22px;max-width:780px}
 .ogp-module{margin-bottom:22px;overflow:hidden}
 .field-panel{position:sticky;top:0;z-index:12;padding:18px 20px;margin:0 0 18px;background:#fff;border:1px solid var(--line);border-radius:10px}

@@ -1,4 +1,4 @@
-import { OGP_PARSER, validateManifest } from './ogp.js';
+import { OGP_PARSER, normalizeOgpCell, validateManifest } from './ogp.js';
 
 // This parser supports text-based HGCal YOLO grid reports, not arbitrary PDFs or OCR.
 // A page without a heading continues the preceding module in the SAME document.
@@ -12,11 +12,10 @@ export function parseCaptionItems(items, viewport, previousModule) {
   const captions = [];
   for (const item of content) {
     if (!/\bcell\b/i.test(item.str)) continue;
-    const match = item.str.trim().match(/^cell\s+(\d+)\s+conf\s+(0(?:\.\d+)?|1(?:\.0+)?)$/i);
+    const match = item.str.trim().match(/^cell\s+(C?\d+|[A-FM-R])\s+conf\s+(0(?:\.\d+)?|1(?:\.0+)?)$/i);
     if (!match) throw new Error('检测标签格式不支持，无法可靠匹配图片：' + item.str);
-    if (+match[1] < 1 || +match[1] > 198) throw new Error('检测 Cell 超出 C1–C198。');
     const [x, y] = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
-    captions.push({ cell: 'C' + Number(match[1]), confidence: +match[2], caption: item.str, x, y });
+    captions.push({ cell: normalizeOgpCell(match[1]), confidence: +match[2], caption: item.str, x, y });
   }
   if (!captions.length) throw new Error('本页没有可读取的 cell / conf 标签；扫描版或其他版式请先预处理。');
   return { moduleId, inherited: !modules.length, captions };

@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = '2026-11-09-special-handling-v1';
+const SHELL_VERSION = '2026-11-18-ogp-numbering-v1';
 let started = false;
 let installEvent = null;
 let registration = null;

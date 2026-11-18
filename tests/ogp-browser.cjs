@@ -11,6 +11,7 @@ const { chromium } = require('playwright');
 const [pdfPath, portablePath, origin='http://127.0.0.1:8765/'] = process.argv.slice(2);
 if(!pdfPath||!portablePath)throw new Error('Pass the fixture PDF and independently preprocessed JSON');
 const expected = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/glue_leakage_1104.expected.json'),'utf8'));
+const expectedNumbering = require('./fixtures/ogp-numbering-2026-11-18.expected.json');
 const portable = JSON.parse(fs.readFileSync(portablePath,'utf8'));
 const out = path.resolve(process.env.BONDING_TEST_OUTPUT || '.dev-evidence');
 fs.mkdirSync(out,{recursive:true});
@@ -70,14 +71,19 @@ let browser;
   await page.locator('[data-act="ogp-preview-return"]').click();await page.locator('#ogp-confirmed').check();await page.locator('[data-act="ogp-confirm"]').click();await closed();
   s=await read();assert.equal(s.rows.length,121);assert.equal(s.images.length,121);assert.equal(s.records.length,2);assert.equal(s.overall.length,1);
   assert.deepEqual(s.imports[0].pages,expected.pages);assert.equal(s.imports[0].source.sha256,expected.source.sha256);
-  const counts={};
+  const counts={};let correctedCount=0;
   for(const [i,row]of s.rows.entries()){
     const target=expected.detections[i];counts[row.moduleId]=(counts[row.moduleId]||0)+1;
     assert.deepEqual([row.moduleId,row.reportedCell,row.confidence,row.sourcePage,row.sourceIndex],[target.moduleId,target.cell,target.confidence,target.page,target.index]);
     assert.equal(typeof row.wire,'string');assert.equal(row.wire,row.mapping.wires[0]);assert.equal(row.originalWire,row.wire);assert.equal(row.status,'pending');
+    const correction=expectedNumbering[target.cell];
+    if(correction){assert.deepEqual([row.mapping.target,row.wire],correction);correctedCount++;}
+    else assert.equal(row.mapping.target,target.cell);
   }
   assert.deepEqual(counts,expected.moduleCounts);
   pass('All six PDF pages, four module IDs, 121 labels/confidences and exactly one first Wire',counts);
+  assert.equal(correctedCount,13);
+  pass('Corrected all 13 affected detections in the historical PDF');
   const pixelResult=await page.evaluate(async originals=>{
     const state=await(await import('./storage.js')).loadState();const report=[];
     const image=src=>new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=src;});
@@ -101,12 +107,12 @@ let browser;
   pass('All 121 native crops match independent originals and preserve red annotations',pixelResult);
   await page.screenshot({path:path.join(out,'mobile-ogp.png')});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  const first=s.rows[0];await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill('25');await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
+  const first=s.rows[0],testWire=expectedNumbering.C61[1];await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill(testWire);await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
   await page.locator('#ogp-reason').fill('现场 Cell 位置核对');await page.locator('#ogp-edit-operator').fill('Correction QA');await page.locator('#ogp-check-status').selectOption('normal');await page.locator('#ogp-note').fill('看图确认正常，含逗号与"引号"\n第二行备注');
   await page.locator('[form="ogp-edit-form"][value="save"]').click();await closed();
-  s=await read();const corrected=s.rows.find(r=>r.id===first.id);assert.equal(corrected.wire,'25');assert.equal(corrected.originalWire,'211');assert.equal(corrected.history.length,2);assert.equal(corrected.history[1].operator,'Correction QA');assert.equal(corrected.status,'normal');
+  s=await read();const corrected=s.rows.find(r=>r.id===first.id);assert.equal(corrected.wire,testWire);assert.equal(corrected.originalWire,'211');assert.equal(corrected.history.length,2);assert.equal(corrected.history[1].operator,'Correction QA');assert.equal(corrected.status,'normal');
   assert.ok(await page.locator('.ogp-item .ogp-duplicate').count()>=2);
-  await page.reload();await page.locator('.shell').waitFor();await nav('ogp');s=await read();assert.equal(s.rows.find(r=>r.id===first.id).wire,'25');assert.equal(s.images.length,121);
+  await page.reload();await page.locator('.shell').waitFor();await nav('ogp');s=await read();assert.equal(s.rows.find(r=>r.id===first.id).wire,testWire);assert.equal(s.images.length,121);
   for(const group of await page.locator('.ogp-module').all()){
     const wires=await group.locator('.ogp-wire-row>b').allTextContents();const nums=wires.map(w=>Number(w.slice(1)));assert.deepEqual(nums,[...nums].sort((a,b)=>a-b));
   }

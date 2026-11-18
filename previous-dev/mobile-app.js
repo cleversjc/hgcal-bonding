@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = 'previous-dev-7655f51';
+const SHELL_VERSION = 'previous-dev-7655f51-numbering-compat';
 let started = false;
 let installEvent = null;
 let registration = null;

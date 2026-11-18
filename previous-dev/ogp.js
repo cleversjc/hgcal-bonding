@@ -8,8 +8,10 @@ const fail = message => { throw new Error(message); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max = 4000, empty = false) => typeof value === 'string' && value.length <= max && (empty || !!value.trim());
 const date = value => text(value, 64) && Number.isFinite(Date.parse(value));
-const wire = value => typeof value === 'string' && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 594;
-const cell = value => typeof value === 'string' && /^C[1-9]\d{0,2}$/.test(value) && Number(value.slice(1)) <= 198;
+// Allow newer saved OGP records to round-trip through the previous interface.
+const savedTargets = new Set(BUILTIN_MAPPING.filter(entry => entry.side === 'front').map(entry => entry.target));
+const wire = value => typeof value === 'string' && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 630;
+const cell = value => savedTargets.has(value);
 
 export function validateOgpImage(image) {
   if (!object(image) || !text(image.name, 1024, true) || !Number.isInteger(image.width) || !Number.isInteger(image.height) || image.width < 1 || image.height < 1 || image.width > 4096 || image.height > 4096) fail('OGP 图片信息无效。');
@@ -85,7 +87,7 @@ export function appendOgpImport(state, draft) {
 
 export function editOgpRow(row, values, now = new Date().toISOString()) {
   const editedWire = String(Number(normalizeWire(values.wire)));
-  if (!wire(editedWire)) fail('定位 Wire 应为 W1–W594。');
+  if (!wire(editedWire)) fail('定位 Wire 应为 W1–W630。');
   if (!Object.hasOwn(OGP_STATUSES, values.status) || !text(values.operator, 60) || !text(values.note, 4000, true) || !text(values.reason, 1000, true)) fail('请填写有效的状态、记录人及备注。');
   if (editedWire !== row.wire && !values.reason.trim()) fail('修改 Wire 时请填写修正原因。');
   return { ...row, wire: editedWire, status: values.status, note: values.note, updatedAt: now,
@@ -141,7 +143,9 @@ export function validateOgpState(state) {
     if (!reportIds.has(row.importId) || !modules.has(row.moduleId) || !cell(row.reportedCell) || !wire(row.wire) || !wire(row.originalWire) || !Number.isFinite(row.confidence) || row.confidence < 0 || row.confidence > 1 || !Object.hasOwn(OGP_STATUSES, row.status) || !text(row.note, 4000, true) || !text(row.caption, 200) || !imageIds.has(row.imageId) || !date(row.createdAt) || !date(row.updatedAt) || !Number.isInteger(row.sourcePage) || row.sourcePage < 1 || !Number.isInteger(row.sourceIndex) || row.sourceIndex < 1) fail('OGP 检测保存字段无效。');
     const key = row.importId + ':' + row.sourcePage + ':' + row.sourceIndex;
     if (sourceKeys.has(key)) fail('OGP 来源序号重复。'); sourceKeys.add(key); referencedImages.add(row.imageId);
-    if (!object(row.mapping) || row.mapping.target !== row.reportedCell || !Array.isArray(row.mapping.wires) || !row.mapping.wires.length || row.mapping.wires.some(w => !wire(w)) || row.mapping.wires[0] !== row.originalWire || !text(row.mapping.source, 2048) || !text(row.mapping.version, 1024)) fail('OGP 原始映射快照无效。');
+    if (!object(row.mapping) || !cell(row.mapping.target) ||
+        (row.mapping.numberingVersion === undefined ? row.mapping.target !== row.reportedCell : !text(row.mapping.numberingVersion, 64)) ||
+        !Array.isArray(row.mapping.wires) || !row.mapping.wires.length || row.mapping.wires.some(w => !wire(w)) || row.mapping.wires[0] !== row.originalWire || !text(row.mapping.source, 2048) || !text(row.mapping.version, 1024)) fail('OGP 原始映射快照无效。');
     if (!Array.isArray(row.history) || !row.history.length) fail('OGP 修改记录缺失。');
     for (const event of row.history) if (!object(event) || !date(event.at) || !text(event.operator, 60) || !wire(event.wire) || !Object.hasOwn(OGP_STATUSES, event.status) || !text(event.note, 4000, true) || !text(event.reason, 1000)) fail('OGP 修改记录无效。');
     for (const event of row.history) if (event.action !== undefined && !['complete', 'reopen'].includes(event.action)) fail('OGP 完成操作无效。');

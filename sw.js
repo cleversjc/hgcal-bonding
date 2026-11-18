@@ -4,7 +4,7 @@
  * in mobile-app.js. Do not call skipWaiting: open pages/drafts keep their
  * current shell until all pages using the previous worker have closed.
  */
-const SHELL_VERSION = '2026-11-09-special-handling-v1';
+const SHELL_VERSION = '2026-11-18-ogp-numbering-v1';
 const CACHE_PREFIX = 'hgcal-bonding-shell-';
 const CACHE_NAME = CACHE_PREFIX + SHELL_VERSION;
 const SCOPE = new URL('./', self.registration.scope);
@@ -109,7 +109,7 @@ self.addEventListener('message', event => {
   if (event.data?.type !== 'HGCAL_SHELL_STATUS' || !event.ports?.[0]) return;
   event.waitUntil((async () => {
     event.ports[0].postMessage({
-      type: 'HGCAL_SHELL_STATUS', version: event.source?.url?.includes('/previous-dev/')?'previous-dev-7655f51':SHELL_VERSION,
+      type: 'HGCAL_SHELL_STATUS', version: event.source?.url?.includes('/previous-dev/')?'previous-dev-7655f51-numbering-compat':SHELL_VERSION,
       ready: await shellReady()
     });
   })());
