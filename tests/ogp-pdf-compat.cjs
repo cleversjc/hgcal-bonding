@@ -12,7 +12,10 @@ const sha256 = crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).dige
 assert.equal(sha256, expected.source.sha256);
 const rowCount = expected.detections.length;
 
-const maskStreamIterator = 'Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { value: undefined, configurable: true });\n';
+const maskBrowserApis = `
+Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { value: undefined, configurable: true });
+Object.defineProperty(Uint8Array.prototype, 'toHex', { value: undefined, configurable: true });
+`;
 const nav = page => page.locator('.bottom-nav [data-view="ogp"]').click();
 const read = page => page.evaluate(async () => {
   const storage = await import('./storage.js');
@@ -27,7 +30,7 @@ const read = page => page.evaluate(async () => {
 async function importPdf(page, beforeCount = 0) {
   await page.locator('[data-act="ogp-import"]').first().click();
   await page.locator('#ogp-file').setInputFiles(pdfPath);
-  await page.locator('#ogp-operator').fill('Compatibility QA');
+  await page.locator('#ogp-operator').fill('Compatibility QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');
   await page.locator('[form="ogp-import-form"]').click();
   await page.waitForFunction(() => document.querySelector('#ogp-confirmed') || document.querySelector('#form-error')?.textContent.trim(), null, { timeout: 45000 });
   assert.equal(await page.locator('#form-error').innerText(), '');
@@ -90,28 +93,29 @@ async function test() {
     console.log('PASS: offline PDF import, identical rows, Wire and image hashes');
 
     const limited = await browser.newContext({ viewport, serviceWorkers: 'block' });
-    await limited.addInitScript({ content: maskStreamIterator });
+    await limited.addInitScript({ content: maskBrowserApis });
     let workerMasked = false;
     await limited.route('**/vendor/pdfjs/pdf.worker.min.mjs', async route => {
       const response = await route.fetch();
       assert.ok(response.ok());
       workerMasked = true;
-      await route.fulfill({ contentType: 'text/javascript', body: maskStreamIterator + await response.text() });
+      await route.fulfill({ contentType: 'text/javascript', body: maskBrowserApis + await response.text() });
     });
     const limitedPage = await newPage(limited);
     assert.deepEqual(await limitedPage.evaluate(() => [
-      typeof ReadableStream.prototype[Symbol.asyncIterator], typeof ReadableStream.prototype.getReader
-    ]), ['undefined', 'function']);
+      typeof ReadableStream.prototype[Symbol.asyncIterator], typeof ReadableStream.prototype.getReader,
+      typeof Uint8Array.prototype.toHex
+    ]), ['undefined', 'function', 'undefined']);
     assert.deepEqual(await importPdf(limitedPage), baseline);
     assert.equal(workerMasked, true);
     assert.deepEqual(errors, []);
-    console.log('PASS: stream async iteration disabled in both window and worker, identical results');
+    console.log('PASS: stream async iteration and native toHex disabled in window and worker, identical results');
 
     const out = process.env.BONDING_TEST_OUTPUT || '.dev-evidence/pdf-compat';
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, 'pdf-compat-tests.json'), JSON.stringify({
       passed: true, url, sourceSha256: sha256, pages: expected.pages, detections: baseline.length,
-      normalImport: true, offlineImport: true, missingStreamIteratorImport: true,
+      normalImport: true, offlineImport: true, missingStreamIteratorAndToHexImport: true,
       previewBeforeWrite: true, sameLabelsWireAndImageHashes: true, pageErrors: errors
     }, null, 2) + '\n');
   } finally {

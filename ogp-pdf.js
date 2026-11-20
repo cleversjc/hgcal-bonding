@@ -1,9 +1,40 @@
 import { OGP_PARSER, normalizeOgpCell, validateManifest } from './ogp.js';
 
+// Adjacent runs on one baseline may use different fonts, for example a bold
+// module ID or Cell. Keep grid columns and different lines separate.
+function captionTextRuns(items) {
+  const runs = [];
+  let run, previous;
+  for (const item of items) {
+    if (typeof item.str !== 'string') continue;
+    if (!item.str) {
+      if (item.hasEOL) previous = null;
+      continue;
+    }
+    const [a, b, c, d, x, y] = item.transform;
+    const horizontal = a > 0 && d > 0 && Math.abs(b) < 0.01 && Math.abs(c) < 0.01;
+    const gap = previous ? x - (previous.x + previous.width) : Infinity;
+    const contiguous = horizontal && previous?.horizontal && Math.abs(y - previous.y) <= 1 && gap >= -1 && gap <= d;
+    const columnGap = !item.str.trim() && item.width > d;
+    if (columnGap) {
+      previous = null;
+      continue;
+    }
+    if (contiguous) {
+      run.str += (gap > 1 ? ' ' : '') + item.str;
+    } else {
+      run = { str: item.str, transform: item.transform };
+      runs.push(run);
+    }
+    previous = item.hasEOL ? null : { horizontal, x, y, width: item.width };
+  }
+  return runs;
+}
+
 // This parser supports text-based HGCal YOLO grid reports, not arbitrary PDFs or OCR.
 // A page without a heading continues the preceding module in the SAME document.
 export function parseCaptionItems(items, viewport, previousModule) {
-  const content = items.filter(item => typeof item.str === 'string');
+  const content = captionTextRuns(items);
   const headings = content.filter(item => /HGCal\s+YOLO\s+Leakage\s+Report/i.test(item.str));
   const modules = [...new Set(headings.flatMap(item => item.str.match(/320[A-Z0-9]{12}(?![A-Z0-9])/g) || []))];
   if (modules.length > 1 || (headings.length && modules.length !== 1)) throw new Error('一页的模块标题不唯一或无效。');

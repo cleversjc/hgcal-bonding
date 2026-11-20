@@ -95,7 +95,7 @@ async function test() {
     for (const file of [pdfPath, jsonPath]) {
       await page.locator('[data-act="ogp-import"]').first().click();
       await page.locator('#ogp-file').setInputFiles(file);
-      await page.locator('#ogp-operator').fill('Numbering QA');
+      await page.locator('#ogp-operator').fill('Numbering QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');
       await page.locator('[form="ogp-import-form"]').click();
       await page.locator('#ogp-confirmed').waitFor();
       assert.equal(await page.locator('.ogp-preview-item').count(), 22);

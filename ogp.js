@@ -4,6 +4,7 @@ import { csvEncode, normalizeTarget, normalizeWire } from './mapping.js';
 export const OGP_STATUSES = { pending: '待确认', normal: '正常', anomaly: '确认异常' };
 export const OGP_PARSER = 'hgcal-yolo-grid-v1';
 export const OGP_NUMBERING_VERSION = '2026-11-18';
+const LD_V3_NUMBERING_VERSION = '2026-11-18-ld-v3-labels';
 
 // OGP report labels are distinct from the LD V3 database location IDs.
 const OGP_TO_DATABASE = Object.freeze({
@@ -38,11 +39,12 @@ function correctedOgpTarget(reportedCell) {
   return OGP_TO_DATABASE[reportedCell] ?? reportedCell;
 }
 
-function mappedOgpLocation(reportedCell) {
-  const target = correctedOgpTarget(reportedCell);
+function mappedOgpLocation(reportedCell, numbering) {
+  const direct = numbering === 'ld-v3';
+  const target = direct ? reportedCell : correctedOgpTarget(reportedCell);
   const entry = frontLocations.get(target);
   if (!entry?.wires.length) fail(reportedCell + ' 没有 LD V3 映射，未保存任何检测。');
-  return { target, wires: entry.wires.map(String), source: entry.source, version: entry.version, numberingVersion: OGP_NUMBERING_VERSION };
+  return { target, wires: entry.wires.map(String), source: entry.source, version: entry.version, numberingVersion: direct ? LD_V3_NUMBERING_VERSION : OGP_NUMBERING_VERSION };
 }
 
 export function ogpLocation(row) {
@@ -50,7 +52,7 @@ export function ogpLocation(row) {
 }
 
 export function pendingOgpNumberingUpdate(row) {
-  if (row.completedAt || row.status !== 'pending' || row.history.length !== 1 || row.wire !== row.originalWire || row.note || row.specialHandling) return null;
+  if (row.mapping.numberingVersion === LD_V3_NUMBERING_VERSION || row.completedAt || row.status !== 'pending' || row.history.length !== 1 || row.wire !== row.originalWire || row.note || row.specialHandling) return null;
   return correctedOgpTarget(row.reportedCell) === ogpLocation(row).target ? null : mappedOgpLocation(row.reportedCell);
 }
 
@@ -96,12 +98,16 @@ export function validateManifest(manifest) {
   return manifest;
 }
 
-export function prepareOgpImport(manifest, operator, now = new Date().toISOString()) {
+export function prepareOgpImport(manifest, operator, now = new Date().toISOString(), numbering = 'legacy') {
   validateManifest(manifest);
   if (!text(operator, 60)) fail('请填写导入人。');
+  if (numbering !== 'legacy' && numbering !== 'ld-v3') {
+    const ambiguous = [...new Set(manifest.detections.map(row => row.cell).filter(label => label !== correctedOgpTarget(label)))];
+    if (ambiguous.length) fail('报告编号 ' + ambiguous.join('、') + ' 在旧编号和 LD V3 新编号中对应不同位点。请按原报告选择编号版本后预览。');
+  }
   const importId = uid(), images = [], rows = [];
   for (const detection of manifest.detections) {
-    const mapping = mappedOgpLocation(detection.cell);
+    const mapping = mappedOgpLocation(detection.cell, numbering);
     const originalWire = mapping.wires[0], imageId = uid();
     images.push({ ...detection.image, id: imageId });
     rows.push({
@@ -190,8 +196,8 @@ function validMapping(mapping, reportedCell) {
   if (!object(mapping) || !cell(mapping.target) || !Array.isArray(mapping.wires) || !mapping.wires.length ||
       !mapping.wires.every(wire) || !text(mapping.source, 2048) || !text(mapping.version, 1024)) return false;
   if (mapping.numberingVersion === undefined) return mapping.target === reportedCell;
-  if (mapping.numberingVersion !== OGP_NUMBERING_VERSION) return text(mapping.numberingVersion, 64);
-  const expected = frontLocations.get(correctedOgpTarget(reportedCell));
+  if (![OGP_NUMBERING_VERSION, LD_V3_NUMBERING_VERSION].includes(mapping.numberingVersion)) return text(mapping.numberingVersion, 64);
+  const expected = frontLocations.get(mapping.numberingVersion === LD_V3_NUMBERING_VERSION ? reportedCell : correctedOgpTarget(reportedCell));
   return mapping.target === expected.target &&
     mapping.wires.length === expected.wires.length && mapping.wires.every((value, index) => value === expected.wires[index]);
 }
