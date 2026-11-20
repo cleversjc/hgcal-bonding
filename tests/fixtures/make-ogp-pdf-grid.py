@@ -56,3 +56,27 @@ for page, label in enumerate(["20", "M", "21", "22", "23", "24"], 1):
     draw_text(pdf, 25, 468, 10, f"cell {label} conf 0.49")
     pdf.showPage()
 pdf.save()
+
+if '--large' in sys.argv:
+    from io import BytesIO
+    from random import Random
+
+    def with_large_images(path, page_count):
+        rng = Random(791)
+        pdf = canvas.Canvas(str(path), pagesize=(650, 620))
+        for page in range(page_count):
+            draw_text(pdf, 25, 596, 14, f"HGCal YOLO Leakage Report - 320TEST{page + 1:08d}")
+            for index, label in enumerate(('M', 'N', '3', '21', '22')):
+                x, y = 25 + index % 3 * 197, 430 - index // 3 * 152
+                image = Image.frombytes('RGB', (1024, 768), rng.randbytes(1024 * 768 * 3))
+                ImageDraw.Draw(image).rectangle((75, 75, 300, 300), outline=(255, 0, 0), width=6)
+                jpeg = BytesIO()
+                image.save(jpeg, 'JPEG', quality=72)
+                jpeg.seek(0)
+                pdf.drawImage(ImageReader(jpeg), x, y, width=128, height=96)
+                draw_text(pdf, x, y - 12, 10, f'cell {label} conf 0.49')
+            pdf.showPage()
+        pdf.save()
+
+    with_large_images(out / 'above-old-limit.pdf', 6)
+    with_large_images(out / 'above-new-limit.pdf', 10)

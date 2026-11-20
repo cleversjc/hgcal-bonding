@@ -14,21 +14,25 @@ export function createPersistence({ emptyState, validateState }) {
   }
   async function read(database,store,key) {return request(database.transaction(store,'readonly').objectStore(store).get(key));}
   function bytes(data) {const [header,base64]=data.split(',');return {mime:header.slice(5,header.indexOf(';')),bytes:Uint8Array.from(atob(base64),c=>c.charCodeAt(0))};}
-  async function digest(data) {const b=bytes(data);return {...b,sha256:[...new Uint8Array(await crypto.subtle.digest('SHA-256',b.bytes))].map(n=>n.toString(16).padStart(2,'0')).join('')};}
+  async function digest(raw) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256',raw))].map(n=>n.toString(16).padStart(2,'0')).join('');}
   async function prepare(data) {
-    validateState(data,{allowImageRefs:true});
+    validateState(data,{allowImageRefs:true,allowImageBlobs:true});
     const refs=new Map(),pending=[],remap=new Map(),knownIds=new Map();
-    for(const image of data.ogpImages||[])if(!image.data)refs.set(image.sha256,image);
+    for(const image of data.ogpImages||[])if(!image.data&&!image.blob)refs.set(image.sha256,image);
     async function imageRef(image) {
-      if(!image.data)return image;
-      const {sha256,mime,bytes:raw}=await digest(image.data);
+      const {blob:pendingBlob,data:encoded,...meta}=image;
+      const blob=encoded===undefined&&pendingBlob instanceof Blob?pendingBlob:null;
+      if(!encoded&&!blob)return image;
+      const decoded=blob?null:bytes(encoded);
+      const mime=blob?.type??decoded.mime;
+      const byteLength=blob?.size??decoded.bytes.length;
+      const sha256=await digest(blob?await blob.arrayBuffer():decoded.bytes);
       let existing=refs.get(sha256);
       if(!existing)existing=await request(connection.transaction('images','readonly').objectStore('images').index('sha256').get(sha256));
       const occupied=image.id?(knownIds.get(image.id)||await read(connection,'images',image.id)):null;
       const id=existing?.id||(occupied&&occupied.sha256!==sha256?'image-'+sha256:image.id)||'photo-'+sha256;
-      const {data:unused,...meta}=image;
-      const ref={...meta,id,sha256,mime,byteLength:raw.length};
-      if(!existing){pending.push({...ref,blob:new Blob([raw],{type:mime})});refs.set(sha256,ref);knownIds.set(id,ref);}
+      const ref={...meta,id,sha256,mime,byteLength};
+      if(!existing){pending.push({...ref,blob:blob||new Blob([decoded.bytes],{type:mime})});refs.set(sha256,ref);knownIds.set(id,ref);}
       return ref;
     }
     const images=[];

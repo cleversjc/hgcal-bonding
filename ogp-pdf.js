@@ -1,4 +1,4 @@
-import { OGP_PARSER, normalizeOgpCell, validateManifest } from './ogp.js';
+import { OGP_PARSER, OGP_PNG_MAX_BYTES, normalizeOgpCell, validateManifest } from './ogp.js';
 
 // Adjacent runs on one baseline may use different fonts, for example a bold
 // module ID or Cell. Keep grid columns and different lines separate.
@@ -102,6 +102,8 @@ async function readPageTextItems(page) {
   }
 }
 
+const PDF_IMAGE_BUDGET_MIB = 96;
+
 export async function parseOgpPdf(file, onProgress = () => {}, signal) {
   if (file.size > 30 * 1024 * 1024) throw new Error('PDF 超过 30 MB，请先使用预处理流程。');
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -135,18 +137,26 @@ export async function parseOgpPdf(file, onProgress = () => {}, signal) {
         canvas.width = box.pixelWidth; canvas.height = box.pixelHeight;
         // Render the entire image footprint at native resolution. Page drawing /
         // red overlays remain visible. PNG is lossless; no thumbnail recompression.
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: page.getViewport({ scale }), transform: [1, 0, 0, 1, -box.x * scale, -box.y * scale], background: 'rgb(255,255,255)' }).promise;
-        const data = canvas.toDataURL('image/png');
-        canvas.width = canvas.height = 0;
-        encodedBytes += data.length;
-        if (encodedBytes > 80 * 1024 * 1024) throw new Error('原图数据超过手机导入上限，请分批预处理。');
+        let blob;
+        try {
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: page.getViewport({ scale }), transform: [1, 0, 0, 1, -box.x * scale, -box.y * scale], background: 'rgb(255,255,255)' }).promise;
+          signal?.throwIfAborted();
+          blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        } finally {
+          canvas.width = canvas.height = 0;
+        }
+        signal?.throwIfAborted();
+        if (!blob?.size) throw new Error('无法生成原图，请使用预处理流程。');
+        if (blob.size > OGP_PNG_MAX_BYTES) throw new Error('单张原图超过导入上限，请使用预处理流程。');
+        encodedBytes += blob.size;
+        if (encodedBytes > PDF_IMAGE_BUDGET_MIB * 1024 * 1024) throw new Error('PDF 展开后的原图总量超过 ' + PDF_IMAGE_BUDGET_MIB + ' MiB，请分批预处理。');
         detections.push({ moduleId: parsed.moduleId, cell: caption.cell, confidence: caption.confidence, caption: caption.caption, page: number, index: index + 1,
-          image: { name: 'page-' + number + '-' + (index + 1) + '-' + caption.cell + '.png', data, width: box.pixelWidth, height: box.pixelHeight } });
+          image: { name: 'page-' + number + '-' + (index + 1) + '-' + caption.cell + '.png', blob, width: box.pixelWidth, height: box.pixelHeight } });
         if (detections.length > 2000) throw new Error('一次最多导入 2000 条检测。');
       }
       page.cleanup();
     }
-    return validateManifest({ app: 'HGCAL OGP Import', schemaVersion: 1, source: { name: file.name, sha256, pageCount: pdf.numPages, parser: OGP_PARSER + '-pdfjs-5.6.205' }, pages, detections });
+    return validateManifest({ app: 'HGCAL OGP Import', schemaVersion: 1, source: { name: file.name, sha256, pageCount: pdf.numPages, parser: OGP_PARSER + '-pdfjs-5.6.205' }, pages, detections }, { allowImageBlobs: true });
   } finally {
     signal?.removeEventListener('abort', abort);
     await task.destroy();

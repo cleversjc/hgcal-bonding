@@ -142,7 +142,7 @@ function requireOgpSnapshot(record) {
   if (snapshot.ranking !== 'review_order_not_probability') invalid('OGP 候选排序依据');
   requireDate(snapshot.confirmedAt, 'OGP 现场确认时间');
 }
-function validateState(data, {allowImageRefs=false}={}) {
+function validateState(data, {allowImageRefs=false, allowImageBlobs=false}={}) {
   if (!isObject(data) || data.schemaVersion !== 1) invalid('数据版本');
   if (!Array.isArray(data.modules) || !Array.isArray(data.records) || !Array.isArray(data.importedMapping)) invalid('必要的数据列表');
   const modules = new Map();
@@ -244,5 +244,5 @@ function validateState(data, {allowImageRefs=false}={}) {
     requireString(data.mappingMeta.source, '用户映射来源', { max: 2048 });
     requireDate(data.mappingMeta.importedAt, '映射导入时间');
   } else if (data.mappingMeta !== null) invalid('空映射的版本信息');
-  validateOgpState(data,{allowImageRefs});
+  validateOgpState(data,{allowImageRefs,allowImageBlobs});
 }

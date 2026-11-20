@@ -3,6 +3,9 @@ import { csvEncode, normalizeTarget, normalizeWire } from './mapping.js';
 
 export const OGP_STATUSES = { pending: '待确认', normal: '正常', anomaly: '确认异常' };
 export const OGP_PARSER = 'hgcal-yolo-grid-v1';
+const OGP_IMAGE_DATA_LIMIT = 16 * 1024 * 1024;
+// Keep PNGs representable within the existing per-image JSON backup limit.
+export const OGP_PNG_MAX_BYTES = Math.floor((OGP_IMAGE_DATA_LIMIT - 'data:image/png;base64,'.length) / 4) * 3;
 export const OGP_NUMBERING_VERSION = '2026-11-18';
 const LD_V3_NUMBERING_VERSION = '2026-11-18-ld-v3-labels';
 
@@ -66,10 +69,14 @@ export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOStr
   return { ...edited, numberingUpdate: location };
 }
 
-export function validateOgpImage(image) {
+export function validateOgpImage(image, { allowImageBlobs = false } = {}) {
   if (!object(image) || !text(image.name, 1024, true) || !Number.isInteger(image.width) || !Number.isInteger(image.height) || image.width < 1 || image.height < 1 || image.width > 4096 || image.height > 4096) fail('OGP 图片信息无效。');
+  if (allowImageBlobs && image.data === undefined && image.blob instanceof Blob) {
+    if (image.blob.type !== 'image/png' || !image.blob.size || image.blob.size > OGP_PNG_MAX_BYTES) fail('OGP PNG 图片大小或类型无效。');
+    return;
+  }
   const match = typeof image.data === 'string' && image.data.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/);
-  if (!match || match[2].length % 4 || image.data.length > 16 * 1024 * 1024) fail('OGP 图片必须包含完整的 JPEG / PNG 字节。');
+  if (!match || match[2].length % 4 || image.data.length > OGP_IMAGE_DATA_LIMIT) fail('OGP 图片必须包含完整的 JPEG / PNG 字节。');
   let header;
   try { header = atob(match[2].slice(0, 32)); } catch { fail('OGP 图片编码无效。'); }
   if (match[1] === 'jpeg' ? !header.startsWith('\xff\xd8\xff') : !header.startsWith('\x89PNG\r\n\x1a\n')) fail('OGP 图片文件头无效。');
@@ -79,7 +86,7 @@ function validateSource(source) {
   if (!object(source) || !text(source.name, 1024) || !/^[a-f0-9]{64}$/.test(source.sha256) || !Number.isInteger(source.pageCount) || source.pageCount < 1 || source.pageCount > 60 || !text(source.parser, 120)) fail('OGP 来源信息无效。');
 }
 
-export function validateManifest(manifest) {
+export function validateManifest(manifest, options) {
   if (!object(manifest) || manifest.app !== 'HGCAL OGP Import' || manifest.schemaVersion !== 1) fail('这不是支持的 OGP 预处理 JSON。');
   validateSource(manifest.source);
   if (!Array.isArray(manifest.detections) || !manifest.detections.length || manifest.detections.length > 2000 || !Array.isArray(manifest.pages) || manifest.pages.length !== manifest.source.pageCount) fail('OGP 页数或检测列表无效。');
@@ -90,7 +97,7 @@ export function validateManifest(manifest) {
     if (identities.has(identity)) fail('检测来源序号重复；重复 Cell 必须保留不同的来源序号。');
     identities.add(identity);
     counts.set(row.page, (counts.get(row.page) || 0) + 1);
-    validateOgpImage(row.image);
+    validateOgpImage(row.image, options);
   }
   for (const [i, page] of manifest.pages.entries()) {
     if (!object(page) || page.page !== i + 1 || !/^320[A-Z0-9]{12}$/.test(page.moduleId) || !Number.isInteger(page.count) || page.count < 1 || page.count !== counts.get(page.page) || manifest.detections.some(r => r.page === page.page && r.moduleId !== page.moduleId)) fail('OGP 每页模块归属或检测数量不一致。');
@@ -99,7 +106,7 @@ export function validateManifest(manifest) {
 }
 
 export function prepareOgpImport(manifest, operator, now = new Date().toISOString(), numbering = 'legacy') {
-  validateManifest(manifest);
+  validateManifest(manifest, { allowImageBlobs: true });
   if (!text(operator, 60)) fail('请填写导入人。');
   if (numbering !== 'legacy' && numbering !== 'ld-v3') {
     const ambiguous = [...new Set(manifest.detections.map(row => row.cell).filter(label => label !== correctedOgpTarget(label)))];
@@ -133,8 +140,12 @@ export function appendOgpImport(state, draft) {
   const imageByData = new Map((state.ogpImages || []).filter(image=>image.data).map(image => [image.data, image.id]));
   const imageIds = new Map(), newImages = [];
   for (const image of draft.images) {
-    let id = imageByData.get(image.data);
-    if (!id) { id = image.id; newImages.push(image); imageByData.set(image.data, id); }
+    let id = image.data && imageByData.get(image.data);
+    if (!id) {
+      id = image.id;
+      newImages.push(image);
+      if (image.data) imageByData.set(image.data, id);
+    }
     imageIds.set(image.id, id);
   }
   return { ...state, modules, activeModuleId: state.activeModuleId || draft.rows[0].moduleId,
@@ -203,14 +214,14 @@ function validMapping(mapping, reportedCell) {
 }
 
 // Optional extension of schema-v1: legacy backups without these arrays remain valid.
-export function validateOgpState(state, {allowImageRefs=false}={}) {
+export function validateOgpState(state, {allowImageRefs=false, allowImageBlobs=false}={}) {
   const reports = state.ogpImports === undefined ? [] : state.ogpImports, rows = state.ogpRows === undefined ? [] : state.ogpRows, images = state.ogpImages === undefined ? [] : state.ogpImages;
   if (![reports, rows, images].every(Array.isArray)) fail('OGP 保存列表无效。');
   const unique = (list, label) => { const ids = new Set(); for (const item of list) { if (!object(item) || !text(item.id, 128) || ids.has(item.id)) fail(label + ' ID 无效或重复。'); ids.add(item.id); } return ids; };
   const reportIds = unique(reports, 'OGP 导入'), imageIds = unique(images, 'OGP 图片'); unique(rows, 'OGP 检测');
   for (const image of images) {
     if (allowImageRefs && image.data === undefined && /^[a-f0-9]{64}$/.test(image.sha256) && Number.isInteger(image.byteLength) && image.byteLength > 0 && /^image\/(jpeg|png)$/.test(image.mime) && Number.isInteger(image.width) && Number.isInteger(image.height) && image.width > 0 && image.height > 0) continue;
-    validateOgpImage(image);
+    validateOgpImage(image, { allowImageBlobs });
   }
   const modules = new Set(state.modules.map(m => m.id));
   for (const report of reports) {
