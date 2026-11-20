@@ -44,6 +44,7 @@ def make(path, labels, split=False, bad=False):
 out = Path(sys.argv[1])
 make(out / "old.pdf", ["3", "28", "13"])
 make(out / "new.pdf", ["M", "N", "C3", "C28"], split=True)
+make(out / "c143.pdf", ["143"])
 make(out / "bad.pdf", ["M", "N"], bad=True)
 
 # Match the reported failure: the first letter caption is on page 2 of 6.

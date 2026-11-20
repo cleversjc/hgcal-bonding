@@ -107,7 +107,8 @@ async function test() {
       const rows = state.ogpRows.slice(-22);
       for (const [index, row] of rows.entries()) {
         const detection = manifest.detections[index];
-        const mapping = detection.page === 1 ? expected[detection.cell] : Object.values(expected).find(([target]) => target === detection.cell);
+        const mapping = detection.cell === 'C143' ? ['C142', '85'] :
+          expected[detection.cell] ?? Object.values(expected).find(([target]) => target === detection.cell);
         assert.equal(row.reportedCell, detection.cell);
         assert.deepEqual([row.mapping.target, row.originalWire], mapping);
         assert.equal(row.wire, row.originalWire);
@@ -124,7 +125,7 @@ async function test() {
     await (await csvEvent).saveAs(csvPath);
     const csv = fs.readFileSync(csvPath, 'utf8');
     assert.match(csv, /"mapped_target","ogp_numbering_version"/);
-    assert.ok(csv.includes(',"M","2026-11-18"'));
+    assert.ok(csv.includes(',"M","2026-11-20-c143"'));
     assert.equal(await page.evaluate(async () => {
       const storage = await import('./storage.js');
       const { createArchive, readArchive } = await import('./archive.js');
