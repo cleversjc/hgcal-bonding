@@ -187,11 +187,11 @@ async function test() {
     }, stable), 'candidate worker to activate');
     await observer.close();
     const page = await newPage(context, stable);
-    assert.match(await page.title(), /1\.1\.0/);
+    assert.match(await page.title(), /1\.2\.0/);
     assert.deepEqual(supportedLegacyFields(await app(page)), supportedLegacyFields(oldState));
     assert.deepEqual(await app(page, './previous-stable/storage.js'), oldState);
     const upgradedStatus = await workerStatus(page);
-    assert.equal(upgradedStatus.version, 'stable-1.1.0');
+    assert.equal(upgradedStatus.version, 'stable-1.2.0');
     assert.equal(upgradedStatus.ready, true);
     await nav(page, 'mapping');
     const checkpoint = await download(page, 'pre-upgrade-backup', 'upgrade-checkpoint.json');
@@ -274,6 +274,7 @@ async function test() {
     await act(page, 'ogp-import').click();
     await page.locator('#ogp-file').setInputFiles(manifestPath);
     await page.locator('#ogp-operator').fill('Release QA');
+    await page.locator('#ogp-numbering-mode').selectOption('legacy');
     await submit(page, 'ogp-import-form');
     await page.locator('#ogp-confirmed').waitFor();
     assert.equal((await app(page)).ogpRows.length, 0);
@@ -298,7 +299,8 @@ async function test() {
     await act(page, 'ogp-previous').click();
     await page.locator('[data-detection-id="' + target.id + '"].is-current').waitFor();
     await card(page, target.id).locator('[data-act="ogp-image"]').click();
-    await page.waitForFunction(() => document.querySelector('#ogp-zoom-image')?.naturalWidth === 640);
+    await page.waitForFunction(width => document.querySelector('#ogp-zoom-image')?.naturalWidth === width,
+      manifest.detections.find(detection => detection.page === target.sourcePage && detection.index === target.sourceIndex).image.width);
     await page.locator('[data-act="ogp-zoom"][data-zoom="4"]').click();
     assert.equal(await page.locator('#ogp-zoom-image').evaluate(img => img.style.width), '400%');
     await close(page);

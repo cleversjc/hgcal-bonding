@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = 'stable-1.1.0';
+const SHELL_VERSION = 'stable-1.2.0';
 let started = false;
 let installEvent = null;
 let registration = null;
@@ -22,16 +22,16 @@ function publish(changes) {
   }
 }
 
-function checkWorker(worker) {
+function askWorker(worker, message, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const timeout = setTimeout(() => {
       channel.port1.close(); reject(new Error('Offline check timed out'));
-    }, 8000);
+    }, timeoutMs);
     channel.port1.onmessage = event => {
       clearTimeout(timeout); channel.port1.close(); resolve(event.data);
     };
-    try { worker.postMessage({ type: 'HGCAL_SHELL_STATUS' }, [channel.port2]); }
+    try { worker.postMessage(message, [channel.port2]); }
     catch (error) { clearTimeout(timeout); channel.port1.close(); reject(error); }
   });
 }
@@ -41,7 +41,7 @@ async function inspectOfflineState() {
   const worker = navigator.serviceWorker.controller || registration?.active;
   if (!worker || worker.state !== 'activated') return;
   try {
-    const result = await checkWorker(worker);
+    const result = await askWorker(worker, { type: 'HGCAL_SHELL_STATUS' });
     if (sequence !== statusSequence) return;
     if (result?.type === 'HGCAL_SHELL_STATUS' && result.version === SHELL_VERSION && result.ready) {
       publish({ offlineStatus: 'ready', updateAvailable: !!registration?.waiting, detail: '当前界面、编号表、位置图和 OGP 解析器已缓存，可离线查号和记录。' });
@@ -122,4 +122,21 @@ export async function promptMobileInstall() {
     const choice = result || await event.userChoice;
     return choice?.outcome === 'accepted' ? 'accepted' : 'dismissed';
   } catch { return 'unavailable'; }
+}
+
+export async function rebuildOfflineCache() {
+  if (!navigator.onLine) throw new Error('请先联网，再重新下载离线文件。');
+  const worker = navigator.serviceWorker?.controller;
+  if (!worker || worker.state !== 'activated') throw new Error('离线工作线程尚未就绪，请联网重开稳定版后再试。');
+  if (registration?.waiting) throw new Error('已有新版等待启用，请关闭所有稳定版窗口后联网重开。');
+  let result;
+  try {
+    result = await askWorker(worker, { type: 'HGCAL_REBUILD_SHELL', version: SHELL_VERSION }, 70000);
+  } catch {
+    throw new Error('未能确认离线缓存重建，请联网重开后检查离线状态。');
+  }
+  if (result?.reason === 'update') throw new Error('缓存版本已更新，请关闭所有稳定版窗口后联网重开。');
+  if (!result?.ok) throw new Error('离线文件下载或版本校验未完成，请保持联网后重试。');
+  await inspectOfflineState();
+  if (state.offlineStatus !== 'ready' || navigator.serviceWorker.controller !== worker) throw new Error('缓存已下载，但尚未确认可离线使用，请联网重开后检查。');
 }
