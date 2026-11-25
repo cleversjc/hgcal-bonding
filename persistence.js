@@ -85,12 +85,72 @@ export function createPersistence({ emptyState, validateState }) {
   }
   async function loadState({images=true}={}) {await ensure();const state=await read(connection,'state','main')||emptyState();return images?hydrateState(state):state;}
   async function saveState(state) {await ensure();return write(state);}
+  async function clearOgpAndIssues() {
+    await ensure();
+    const tx=connection.transaction(['state','images','checkpoints'],'readwrite');
+    const done=finished(tx), states=tx.objectStore('state'), images=tx.objectStore('images');
+    const removedImages=new Set(), keptImages=new Set();
+    let cleaned, failure;
+    function clear(snapshot) {
+      for (const image of snapshot.ogpImages || []) removedImages.add(image.id);
+      for (const record of snapshot.records) for (const photo of record.photos) removedImages.add(photo.id);
+      for (const record of snapshot.overallRecords || []) for (const photo of record.photos) keptImages.add(photo.id);
+      return {...snapshot, records:[], ogpRows:[], ogpImports:[], ogpImages:[]};
+    }
+    function step(callback) {
+      try { callback(); }
+      catch (error) { failure=error; tx.abort(); }
+    }
+    const handoff=states.get('handoff-pending');
+    handoff.onsuccess=()=>step(()=>{
+      if (handoff.result) throw new Error('当前记录已交给上一版，请先完成返回流程。');
+      const main=states.get('main');
+      main.onsuccess=()=>step(()=>{
+        cleaned=clear(main.result || emptyState());
+        validateState(cleaned,{allowImageRefs:true});
+        const checkpoints=tx.objectStore('checkpoints').openCursor();
+        checkpoints.onsuccess=()=>step(()=>{
+          const cursor=checkpoints.result;
+          if (cursor) {
+            const snapshot=clear(cursor.value.state);
+            validateState(snapshot,{allowImageRefs:true});
+            cursor.update({...cursor.value,state:snapshot});
+            cursor.continue();
+          } else {
+            for (const id of removedImages) if (id && !keptImages.has(id)) images.delete(id);
+            states.put(cleaned,'main');
+            // The last-backup fingerprint contains copies of issue/OGP metadata.
+            // Exported files are outside this database.
+            states.delete('backup-info');
+          }
+        });
+      });
+    });
+    try { await done; }
+    catch (error) { throw failure || error; }
+    return cleaned;
+  }
   async function getBackupInfo() {await ensure();return await read(connection,'state','backup-info')||null;}
   async function noteBackup(moduleId=null,exportedState=null) {
-    const state=exportedState||await loadState({images:false}),last=await getBackupInfo()||{},include=r=>!moduleId||r.moduleId===moduleId;
-    const entry={at:new Date().toISOString(),moduleId,fingerprint:fingerprint(state,moduleId),ids:[...state.records.filter(include).map(r=>'record:'+r.id),...(state.overallRecords||[]).filter(include).map(r=>'overall:'+r.id),...(state.ogpRows||[]).filter(include).map(r=>'ogp:'+r.id)]};
-    const info={...entry,scopes:{...(last.scopes||{}),[moduleId||'all']:entry}};
-    const tx=connection.transaction('state','readwrite'),done=finished(tx);tx.objectStore('state').put(info,'backup-info');await done;return info;
+    const state=exportedState||await loadState({images:false});
+    await ensure();
+    const include=r=>!moduleId||r.moduleId===moduleId;
+    const idsFor=s=>[...s.records.filter(include).map(r=>'record:'+r.id),...(s.overallRecords||[]).filter(include).map(r=>'overall:'+r.id),...(s.ogpRows||[]).filter(include).map(r=>'ogp:'+r.id)];
+    const entry={at:new Date().toISOString(),moduleId,fingerprint:fingerprint(state,moduleId),ids:idsFor(state)};
+    const tx=connection.transaction('state','readwrite'),done=finished(tx),store=tx.objectStore('state');
+    const current=store.get('main'), previous=store.get('backup-info');
+    let info;
+    previous.onsuccess=()=>{
+      const last=previous.result;
+      const liveIds=new Set(idsFor(current.result||emptyState()));
+      // A backup already in flight may still finish its download after a clear.
+      // Do not put deleted records back into the local fingerprint.
+      if (entry.ids.some(id=>!liveIds.has(id))) {info=last||null;return;}
+      info={...entry,scopes:{...(last?.scopes||{}),[moduleId||'all']:entry}};
+      store.put(info,'backup-info');
+    };
+    await done;
+    return info;
   }
   function fingerprint(state,moduleId=null) {
     const include=r=>!moduleId||r.moduleId===moduleId;
@@ -110,5 +170,5 @@ export function createPersistence({ emptyState, validateState }) {
     }finally{legacy.close();}
     return current;
   }
-  return {loadState,saveState,getImage,getImageBlob,hydrateState,getBackupInfo,noteBackup,fingerprint,checkpointBackup,prepareRollback};
+  return {loadState,saveState,clearOgpAndIssues,getImage,getImageBlob,hydrateState,getBackupInfo,noteBackup,fingerprint,checkpointBackup,prepareRollback};
 }

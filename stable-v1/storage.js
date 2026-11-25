@@ -5,7 +5,7 @@ import { createPersistence } from './persistence.js';
 
 export function emptyState() { return { schemaVersion: 1, modules: [], records: [], overallRecords: [], ogpImports: [], ogpRows: [], ogpImages: [], importedMapping: [], mappingMeta: null, activeModuleId: null }; }
 const persistence = createPersistence({emptyState,validateState});
-export const {loadState,saveState,getImage,getImageBlob,hydrateState,getBackupInfo,noteBackup,fingerprint,checkpointBackup,prepareRollback} = persistence;
+export const {loadState,saveState,clearOgpAndIssues,getImage,getImageBlob,hydrateState,getBackupInfo,noteBackup,fingerprint,checkpointBackup,prepareRollback} = persistence;
 export function makeBackup(state) {
   return { app: 'HGCAL Bonding Workbench', schemaVersion: 1, exportedAt: new Date().toISOString(), data: state };
 }

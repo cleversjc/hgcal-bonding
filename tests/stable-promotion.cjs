@@ -1,4 +1,4 @@
-// node tests/stable-promotion.cjs <stable 1.1.0 checkout>
+// node tests/stable-promotion.cjs <previous release checkout> [dev]
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
@@ -9,6 +9,12 @@ const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '..');
 const old = path.resolve(process.argv[2]);
+const isDev = process.argv[3] === 'dev';
+const entry = isDev ? '' : 'stable-v1/';
+const priorVersion = isDev ? '2026-11-20-ogp-c143-v1' : 'stable-1.2.0';
+const currentVersion = isDev ? '2026-11-25-ogp-c143-revert-v1' : 'stable-1.2.1';
+const cachePrefix = isDev ? 'hgcal-bonding-shell-' : 'hgcal-bonding-stable-v1-shell-';
+const fieldKey = isDev ? 'hgcal-bonding-field-session-v1' : 'hgcal-bonding-stable-field-session-v1';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 let stableRoot = old;
 const server = createServer((request, response) => {
@@ -16,7 +22,7 @@ const server = createServer((request, response) => {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
     if (pathname === '/probe') { response.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html>'); return; }
     const relative = pathname.slice('/hgcal-bonding/'.length);
-    const base = relative.startsWith('stable-v1/') ? stableRoot : root;
+    const base = relative.startsWith('stable-v1/') !== isDev ? stableRoot : root;
     const file = path.resolve(base, relative + (pathname.endsWith('/') ? 'index.html' : ''));
     if (!pathname.startsWith('/hgcal-bonding/') || !file.startsWith(base + path.sep)) throw new Error('Invalid fixture URL');
     const bytes = readFileSync(file);
@@ -32,7 +38,7 @@ async function test() {
     const pdf = path.join(fixtures, 'c143.pdf');
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const site = `http://127.0.0.1:${server.address().port}`;
-    const url = site + '/hgcal-bonding/stable-v1/';
+    const url = site + '/hgcal-bonding/' + entry;
     const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_EXECUTABLE || undefined,
       channel: process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined) });
     try {
@@ -59,17 +65,19 @@ async function test() {
         await page.locator('.modal').waitFor({ state: 'hidden' });
       }
       const oldPage = await open(url);
-      assert.match(await oldPage.title(), /1\.1\.0/);
+      await nav(oldPage, 'mapping');
+      assert.match(await oldPage.locator('.release-label').innerText(), isDev ? /C143 对照修正/ : /1\.2\.0/);
       await nav(oldPage, 'ogp');
       await ready(oldPage);
       await startImport(oldPage);
+      await oldPage.locator('#ogp-numbering-mode').selectOption('legacy');
       await parse(oldPage);
       await save(oldPage);
       const initial = await read(oldPage);
-      assert.equal(initial.ogpRows[0].wire, '337');
+      assert.equal(initial.ogpRows[0].wire, '85');
       assert.equal(initial.ogpImages.length, 1);
       await oldPage.locator('#ogp-status').selectOption('all');
-      const preference = await oldPage.evaluate(() => localStorage.getItem('hgcal-bonding-stable-field-session-v1'));
+      const preference = await oldPage.evaluate(key => localStorage.getItem(key), fieldKey);
       assert.ok(preference);
       const observer = await context.newPage();
       await observer.goto(site + '/probe');
@@ -79,40 +87,41 @@ async function test() {
         await page.waitForFunction(() => [...document.querySelectorAll('[data-mobile-status]')].some(node => node.textContent.startsWith('新版已就绪')));
         await page.close();
         const deadline = Date.now() + 15000;
-        while (await observer.evaluate(async name => (await caches.keys()).some(key => key === name || key === name + '-alternate'), 'hgcal-bonding-stable-v1-shell-' + previousVersion)) {
+        while (await observer.evaluate(async name => (await caches.keys()).some(key => key === name || key === name + '-alternate'), cachePrefix + previousVersion)) {
           if (Date.now() > deadline) throw new Error('Stable worker did not activate');
           await new Promise(resolve => setTimeout(resolve, 150));
         }
         return open(url);
       }
-      const page = await activate(oldPage, root, 'stable-1.1.0');
-      assert.match(await page.title(), /1\.2\.0/);
+      const page = await activate(oldPage, root, priorVersion);
+      await nav(page, 'mapping');
+      assert.match(await page.locator('.release-label').innerText(), isDev ? /C143 对照回退/ : /1\.2\.1/);
+      await nav(page, 'ogp');
       assert.deepEqual(await read(page), initial);
       assert.equal(await page.locator('#ogp-status').inputValue(), 'all');
-      const devPage = await open(site + '/hgcal-bonding/');
+      const devPage = await open(site + '/hgcal-bonding/' + (isDev ? 'stable-v1/' : ''));
       await nav(devPage, 'mapping');
       await ready(devPage);
       assert.equal((await read(devPage)).ogpRows.length, 0);
-      for (const [mode, result] of [['legacy', ['C142', '85']], ['ld-v3', ['C143', '337']]]) {
+      for (const mode of ['legacy', 'ld-v3']) {
         const before = await read(page);
         await startImport(page);
-        await parse(page);
-        await page.locator('#form-error').filter({ hasText: '对应不同位点' }).waitFor();
-        assert.deepEqual(await read(page), before);
         await page.locator('#ogp-numbering-mode').selectOption(mode);
         await parse(page);
+        await page.locator('#ogp-confirmed').waitFor();
+        assert.deepEqual(await read(page), before);
         await save(page);
         const row = (await read(page)).ogpRows.at(-1);
-        assert.deepEqual([row.mapping.target, row.wire], result);
+        assert.deepEqual([row.mapping.target, row.wire], ['C143', '337']);
       }
       await action(page, 'ogp-numbering-preview').click();
-      const choice = page.locator('[data-ogp-legacy-id]');
+      const choice = page.locator('[data-ogp-c143-rollback-id]');
       assert.equal(await choice.count(), 1);
       await choice.check();
       await action(page, 'ogp-numbering-confirm').click();
       await page.locator('.modal').waitFor({ state: 'hidden' });
       const saved = await read(page);
-      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], ['85', '337']);
+      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], ['337', '85']);
       assert.equal(saved.ogpImages[0].data, initial.ogpImages[0].data);
       // Saving an import opens the unfinished view; explicitly set the preference
       // that the cache rebuild and offline reopening should preserve.
@@ -123,7 +132,7 @@ async function test() {
       await action(page, 'rebuild-offline-cache').click();
       await action(page, 'confirm-rebuild-offline-cache').click();
       await page.locator('#toast').filter({ hasText: '离线缓存已重建' }).waitFor();
-      assert.deepEqual(await keys(), beforeKeys.map(name => name === 'hgcal-bonding-stable-v1-shell-stable-1.2.0' ? name + '-alternate' : name).sort());
+      assert.deepEqual(await keys(), beforeKeys.map(name => name === cachePrefix + currentVersion ? name + '-alternate' : name).sort());
       assert.deepEqual(await read(page), saved);
       await context.setOffline(true);
       await page.close();
@@ -131,10 +140,11 @@ async function test() {
       assert.deepEqual(await read(offline), saved);
       assert.equal(await offline.locator('#ogp-status').inputValue(), 'all');
       await context.setOffline(false);
-      const rolledBack = await activate(offline, old, 'stable-1.2.0');
-      assert.match(await rolledBack.title(), /1\.1\.0/);
+      const rolledBack = await activate(offline, old, currentVersion);
+      await nav(rolledBack, 'mapping');
+      assert.match(await rolledBack.locator('.release-label').innerText(), isDev ? /C143 对照修正/ : /1\.2\.0/);
       assert.deepEqual(await read(rolledBack), saved);
-      console.log('PASS: installed stable 1.1.0 upgrade keeps records, original image, and preferences; C143 modes, confirmed migration, scoped cache rebuild, and offline reopen');
+      console.log('PASS: ' + (isDev ? 'development' : 'stable') + ' installed upgrade keeps records, original image, and preferences; C143 modes, confirmed migration, scoped cache rebuild, and offline reopen');
     } finally { await browser.close(); }
   } finally { rmSync(fixtures, { recursive: true, force: true }); }
 }

@@ -1,5 +1,5 @@
 // Keep this version equal to sw.js; bump both for every shell release.
-const SHELL_VERSION = 'stable-1.2.0';
+const SHELL_VERSION = 'stable-1.2.1';
 let started = false;
 let installEvent = null;
 let registration = null;

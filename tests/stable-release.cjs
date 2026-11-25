@@ -187,11 +187,11 @@ async function test() {
     }, stable), 'candidate worker to activate');
     await observer.close();
     const page = await newPage(context, stable);
-    assert.match(await page.title(), /1\.2\.0/);
+    assert.match(await page.title(), /1\.2\.1/);
     assert.deepEqual(supportedLegacyFields(await app(page)), supportedLegacyFields(oldState));
     assert.deepEqual(await app(page, './previous-stable/storage.js'), oldState);
     const upgradedStatus = await workerStatus(page);
-    assert.equal(upgradedStatus.version, 'stable-1.2.0');
+    assert.equal(upgradedStatus.version, 'stable-1.2.1');
     assert.equal(upgradedStatus.ready, true);
     await nav(page, 'mapping');
     const checkpoint = await download(page, 'pre-upgrade-backup', 'upgrade-checkpoint.json');

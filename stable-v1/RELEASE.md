@@ -1,13 +1,16 @@
-# 稳定版 1.2.0
+# 稳定版 1.2.1
 
-入口仍为 `/stable-v1/`，已安装的应用沿用现有安装标识、本机稳定版数据库和设置。此版将开发版 `0ea458317b94d63fa8a5b9dba6f75e03a00238e5` 的 OGP PDF、编号对照与离线缓存更新发布到稳定版。
+入口仍为 `/stable-v1/`，已安装的应用沿用现有安装标识、本机稳定版数据库和设置。此版恢复 11 月 20 日前的 C143 对照规则，保留 1.2.0 的 PDF 和离线更新。
 
-- 旧 OGP 报告的 C143 定位到 LD V3 C142 / W85。选择新版 LD V3 时，C143 仍定位到 W337。旧清单可通过「预览编号更新」核对后逐条确认。
+- 旧 OGP 与新版 LD V3 的 C143 都定位到 C143 / W337。按 11 月 20 日规则定位到 W85 的待办，若尚未处理或手工修改，可通过「预览编号更新」逐条勾选改回 W337。
 - PDF 按原分辨率保留图块和标注。展开后的 PNG 总量上限为 96 MiB，按实际字节计量。
 - 「映射与资料 → 手机使用 → 清除并重建离线缓存」联网下载并校验本版本离线文件，再替换稳定版应用缓存。本机业务记录、原图和设置保留。
+- 如需主动删除本机 OGP 与异常记录，使用同一栏的「清除 OGP 与问题记录」。可先导出 ZIP 备份，删除前须输入「删除」确认。
 
-更新时先联网打开稳定版，看到「新版已就绪」后关闭所有稳定版窗口，再从原入口打开。可在「映射与资料」确认版本为 1.2.0。
+更新时先联网打开稳定版，看到「新版已就绪」后关闭所有稳定版窗口，再从原入口打开。可在「映射与资料」确认版本为 1.2.1。
 
-稳定版 1.1.0 的原始源码有独立备份分支 [`backup/stable-v1.1.0-before-1.2.0`](https://github.com/cleversjc/hgcal-bonding/tree/backup/stable-v1.1.0-before-1.2.0/stable-v1) 和既有标签 [`stable-v1.1.0`](https://github.com/cleversjc/hgcal-bonding/tree/stable-v1.1.0/stable-v1)，目录树为 `43bf71dfc3f7bd87868f0281812b079c83a01f54`。若需站点回退，在 `main` 上提交对本次稳定版发布提交的反向变更，继续使用现有入口和本机数据库。
+回退前的稳定版 1.2.0 与开发版源码保存在 [备份分支](https://github.com/cleversjc/hgcal-bonding/tree/backup/before-ogp-c143-rollback-20261125)。
+
+稳定版 1.1.0 的原始源码有独立备份分支 [`backup/stable-v1.1.0-before-1.2.0`](https://github.com/cleversjc/hgcal-bonding/tree/backup/stable-v1.1.0-before-1.2.0/stable-v1) 和既有标签 [`stable-v1.1.0`](https://github.com/cleversjc/hgcal-bonding/tree/stable-v1.1.0/stable-v1)，目录树为 `43bf71dfc3f7bd87868f0281812b079c83a01f54`。若需回到 1.1.0，可用普通提交将备份中的稳定版目录恢复到 `main`，继续使用现有入口和本机数据库。
 
 现有内置 `previous-stable/` 兼容入口继续提供 1.0.0 数据交接和返回流程。「导出更新前快照」仍指从 1.0.0 首次迁移时保存的快照。

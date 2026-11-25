@@ -1,12 +1,12 @@
 import { CELL_POSITIONS, GROUP_POSITIONS, MAP_IMAGE, BUILTIN_MAPPING, GROUNDING, BACKSIDE_ORDER, DOMAIN_NOTES, REFERENCE_MAP_METADATA, REFERENCE_COORDINATES } from './domain-data.js';
 import { normalizeTarget, normalizeWire, wireKey, parseMapping, validateAgainstBuiltin, getMappings, resolveStoredMappings, lookupTarget, lookupWire, coverage, csvEncode } from './mapping.js';
-import { loadState, saveState, makeBackup, readBackup, mergeBackup, getImage, getImageBlob, hydrateState, getBackupInfo, noteBackup, fingerprint, checkpointBackup, prepareRollback } from './storage.js';
+import { loadState, saveState, clearOgpAndIssues, makeBackup, readBackup, mergeBackup, getImage, getImageBlob, hydrateState, getBackupInfo, noteBackup, fingerprint, checkpointBackup, prepareRollback } from './storage.js';
 import { BACKSIDE_POSITIONS, renderBacksideMap } from './backside-map.js';
 import { initMobileApp, getMobileAppState, promptMobileInstall, rebuildOfflineCache } from './mobile-app.js';
 import {
   OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, setOgpCompletion, hasOgpSpecialHandling,
   filterOgpRows, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest, ogpLocation,
-  pendingOgpNumberingUpdate, requiresOgpLegacyConfirmation, applyOgpNumberingUpdate
+  pendingOgpNumberingUpdate, requiresC143RollbackConfirmation, applyOgpNumberingUpdate
 } from './ogp.js';
 import { parseOgpPdf } from './ogp-pdf.js';
 import {createArchive,readArchive} from './archive.js';
@@ -51,6 +51,7 @@ let channel;
 let parsedOgpInput = null;
 let stagedOgp = null, ogpController = null, ogpRowContext = null;
 let stagedOgpNumbering = null;
+let clearingRecords = false;
 const ogpImageUrls = new Map();
 const imageLoads=new Map();
 let imageObserver,backupInfo=null,undoCompletion=null,sessionTimer;
@@ -226,14 +227,29 @@ function observeImages() {
     const id=img.dataset.storedImage;if(!id)return;
     try{
       if(ogpImageUrl(id)===imagePlaceholder){
-        if(!imageLoads.has(id))imageLoads.set(id,getImageBlob(id).then(blob=>{const url=URL.createObjectURL(blob);ogpImageUrls.set(id,url);return url;}));
+        if(!imageLoads.has(id)){
+          const pending=getImageBlob(id).then(blob=>{
+            if(imageLoads.get(id)===pending)ogpImageUrls.set(id,URL.createObjectURL(blob));
+          });
+          imageLoads.set(id,pending);
+        }
         await imageLoads.get(id);
       }
-      if(img.isConnected)img.src=ogpImageUrls.get(id);
+      if(img.isConnected&&ogpImageUrls.has(id))img.src=ogpImageUrls.get(id);
     }catch{if(img.isConnected)img.alt='原图读取失败，请保留数据并恢复完整备份';imageLoads.delete(id);}
   };
   if('IntersectionObserver' in window){imageObserver=new IntersectionObserver(items=>{for(const item of items)if(item.isIntersecting){void load(item.target);imageObserver.unobserve(item.target);}},{rootMargin:'200px'});$$('img[data-stored-image]').forEach(img=>imageObserver.observe(img));}
   else $$('img[data-stored-image]').forEach(img=>void load(img));
+}
+function releaseClearedImageUrls() {
+  const kept=new Set((state.overallRecords||[]).flatMap(record=>record.photos.map(photo=>photo.id)));
+  for(const image of stagedOgp?.images||[]) kept.add(image.id);
+  for(const [id,url] of ogpImageUrls){
+    if(kept.has(id))continue;
+    URL.revokeObjectURL(url);ogpImageUrls.delete(id);
+  }
+  for(const id of imageLoads.keys())if(!kept.has(id))imageLoads.delete(id);
+  if(['ogp-edit','ogp-numbering','detail','photo'].includes(modalKind)||(modalKind==='ogp-image'&&!stagedOgp))closeModal(true);
 }
 function rememberField() {
   if(ui.view!=='ogp')return;
@@ -302,7 +318,7 @@ function ogpNumberingModal() {
   const sources = new Map((state.ogpImports || []).map(report => [report.id, report.source.name]));
   const changes = rows.map(row => {
     const location = pendingOgpNumberingUpdate(row);
-    const confirmation = requiresOgpLegacyConfirmation(row) ? '<label class="check-label"><input type="checkbox" data-ogp-legacy-id="' + e(row.id) + '">确认原报告采用旧 OGP 编号 · ' + e(sources.get(row.importId) || '') + '</label>' : '';
+    const confirmation = requiresC143RollbackConfirmation(row) ? '<label class="check-label"><input type="checkbox" data-ogp-c143-rollback-id="' + e(row.id) + '">确认将本条改回 W337 · ' + e(sources.get(row.importId) || '') + '</label>' : '';
     return '<li><b class="mono">' + e(row.moduleId) + '</b><p>OGP ' + e(row.reportedCell) + ' → ' + e(location.target) +
       ' · W' + e(row.wire) + ' → W' + e(location.wires[0]) + ' · 第 ' + row.sourcePage + ' 页 / ' + row.sourceIndex + ' 项</p>' + confirmation + '</li>';
   }).join('');
@@ -351,7 +367,7 @@ function ogpImageModal(id,preview=false) {
 }
 function mappingPage() {
   const cov=coverage(entries);
-  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','上一版兼容 JSON','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 包含原图，文件更小；兼容 JSON 可供上一版恢复。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">稳定版 1.2.0 · OGP 与离线更新</p>'+button('rebuild-offline-cache','清除并重建离线缓存','reset','small')+'</div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
+  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','上一版兼容 JSON','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 包含原图，文件更小；兼容 JSON 可供上一版恢复。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">稳定版 1.2.1 · OGP C143 对照回退</p><div class="settings-actions">'+button('rebuild-offline-cache','清除并重建离线缓存','reset','small')+button('clear-ogp-and-issues','清除 OGP 与问题记录','','small')+'</div></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
 }
 function openModal(title,subtitle,body,foot='',large=false) {
   modalEpoch++;
@@ -361,6 +377,7 @@ function openModal(title,subtitle,body,foot='',large=false) {
   observeImages();dirty=false; setTimeout(()=>$('.modal-head .icon-button')?.focus(),30);
 }
 function closeModal(force=false) {
+  if(clearingRecords&&!force)return;
   if(!force && (photoBusy || dirty) && !confirm(photoBusy?'照片正在处理，确定放弃吗？':'尚有未保存内容，确定放弃吗？')) return;
   ogpController?.abort();ogpController=null;
   const savedImages=new Set((state.ogpImages||[]).map(p=>p.id));
@@ -532,9 +549,9 @@ async function onAction(el) {
   if(a==='ogp-edit')ogpEditModal(el.dataset.id);
   if(a==='ogp-numbering-preview')ogpNumberingModal();
   if(a==='ogp-numbering-confirm'&&stagedOgpNumbering){
-    const confirmedLegacy = new Set($$('[data-ogp-legacy-id]:checked').map(input => input.dataset.ogpLegacyId));
-    const expected = new Map([...stagedOgpNumbering].filter(([id, row]) => !requiresOgpLegacyConfirmation(row) || confirmedLegacy.has(id)));
-    if (!expected.size) { error('请勾选已核对为旧 OGP 编号的条目。'); return; }
+    const confirmedC143Rollback = new Set($$('[data-ogp-c143-rollback-id]:checked').map(input => input.dataset.ogpC143RollbackId));
+    const expected = new Map([...stagedOgpNumbering].filter(([id, row]) => !requiresC143RollbackConfirmation(row) || confirmedC143Rollback.has(id)));
+    if (!expected.size) { error('请勾选要改回 W337 的 C143 条目。'); return; }
     el.disabled = true;
     try {
       await commit(s => {
@@ -545,7 +562,7 @@ async function onAction(el) {
           if (row.updatedAt !== preview.updatedAt || row.wire !== preview.wire) throw new Error('待办已在其他窗口更新，请重新预览。');
           updated++;
           const operator = s.modules.find(module => module.id === row.moduleId)?.operator || row.history[0].operator;
-          return applyOgpNumberingUpdate(row, operator, undefined, { confirmedLegacy: confirmedLegacy.has(row.id) });
+          return applyOgpNumberingUpdate(row, operator, undefined, { confirmedC143Rollback: confirmedC143Rollback.has(row.id) });
         });
         if (updated !== expected.size) throw new Error('待办列表已变化，请重新预览。');
         return {...s, ogpRows: rows};
@@ -575,6 +592,32 @@ async function onAction(el) {
   if(a==='nav'){ui.view=el.dataset.view;if(ui.view==='ogp'&&ui.ogpModule!=='all'&&state.modules.some(m=>m.id===ui.ogpModule))await commit(s=>({...s,activeModuleId:ui.ogpModule}));else render();window.scrollTo({top:0});rememberField();}
   if(a==='module')moduleModal();
   if(a==='mobile-help')mobileHelpModal();
+  if(a==='clear-ogp-and-issues'){
+    modalKind='clear-ogp-and-issues';
+    openModal('清除 OGP 与问题记录','此操作不可撤销，建议先导出完整备份。',
+      '<p>永久删除本安装的全部 OGP 导入批次、检测、处理历史和原图，以及手工记录的异常、附件和附在这些异常上的拉力值。这里的本机升级快照也会清除这些项目。</p><p>模块、整体情况及其照片、自定义映射、设置、离线应用文件和其他版本的数据会保留。已导出的备份文件仍由你保管。</p><div class="field"><label for="clear-records-confirmation">输入「删除」确认</label><input id="clear-records-confirmation" autocomplete="off"></div>',
+      button('backup-zip','先导出完整备份','download')+button('close-modal','取消')+button('confirm-clear-ogp-and-issues','永久删除','','primary'));
+  }
+  if(a==='confirm-clear-ogp-and-issues'&&modalKind==='clear-ogp-and-issues'){
+    if($('#clear-records-confirmation').value.trim()!=='删除'){error('请输入「删除」确认。');return;}
+    if(!navigator.locks){error('此浏览器无法安全锁定多窗口写入，请在支持 Web Locks 的浏览器中使用此功能。');return;}
+    const epoch=modalEpoch;
+    const controls=$$('.modal button, .modal input');
+    clearingRecords=true;
+    for(const control of controls)control.disabled=true;
+    try{
+      commitQueue=commitQueue.catch(()=>{}).then(()=>navigator.locks.request('hgcal-bonding-stable-save',async()=>{
+        state=await clearOgpAndIssues();backupInfo=null;
+        releaseClearedImageUrls();updateEntries();render();channel?.postMessage('records-cleared');
+      }));
+      await commitQueue;
+      if(epoch===modalEpoch){closeModal(true);toast('本安装的 OGP 与问题记录已清除。');}
+    }finally{
+      clearingRecords=false;
+      for(const control of controls)if(control.isConnected)control.disabled=false;
+    }
+  }
+
   if(a==='rebuild-offline-cache'){
     modalKind='rebuild-offline-cache';
     openModal('清除并重建离线缓存','需要联网重新下载稳定版离线文件。',
@@ -674,7 +717,7 @@ document.addEventListener('keydown',event=>{
   }
 });
 document.addEventListener('input',event=>{
-  if(event.target.closest('.modal'))dirty=true;
+  if(event.target.closest('.modal')&&event.target.id!=='clear-records-confirmation')dirty=true;
   if(event.target.id==='query-input')ui.query=event.target.value;
   if(event.target.id==='ogp-jump')ui.wireJump=event.target.value;
   if(event.target.id==='ogp-note'&&event.target.value.trim())$('#ogp-special-handling').checked=true;
@@ -840,7 +883,7 @@ try{
   initMobileApp(refreshMobileStatus);
   if('BroadcastChannel' in window){
     channel=new BroadcastChannel('hgcal-bonding-stable-updates');
-    channel.onmessage=async()=>{try{state=await loadState({images:false});updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
+    channel.onmessage=async event=>{try{state=await loadState({images:false});if(event.data==='records-cleared'){backupInfo=null;releaseClearedImageUrls();}updateEntries();render();}catch{toast('其他窗口更新后读取失败，请刷新。');}};
   }
 }catch(ex){
   $('#app').innerHTML='<div class="boot"><span class="boot-hex">⬡</span><h1>本机记录暂时无法读取</h1><p>'+e(ex.message)+'</p><p>请使用允许保存网站数据的浏览器，并刷新重试。</p><p><a class="button" href="./previous-stable/">打开上一版（原记录仍保留）</a></p></div>';

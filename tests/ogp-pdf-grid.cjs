@@ -19,12 +19,14 @@ async function openImport(page, file) {
   await page.locator('#ogp-operator').fill('PDF QA');
 }
 
-async function saveImport(page, file, numbering, expected, before) {
+async function saveImport(page, file, numbering, expected, before, ambiguous = true) {
   await openImport(page, file);
-  await parse(page);
-  await error(page).filter({ hasText: '对应不同位点' }).waitFor();
-  assert.deepEqual(await read(page), before);
-  await page.locator('#ogp-numbering-mode').selectOption(numbering);
+  if (ambiguous) {
+    await parse(page);
+    await error(page).filter({ hasText: '对应不同位点' }).waitFor();
+    assert.deepEqual(await read(page), before);
+  }
+  if (numbering) await page.locator('#ogp-numbering-mode').selectOption(numbering);
   await parse(page);
   await page.locator('#ogp-confirmed').waitFor();
   assert.equal(await page.locator('.ogp-preview-item').count(), expected.length);
@@ -92,8 +94,9 @@ async function test() {
       const offline = await saveImport(page, path.join(fixtures, 'new.pdf'), 'ld-v3', newRows, revised);
       assert.deepEqual(offline.ogpImages, revised.ogpImages);
       const c143 = path.join(fixtures, 'c143.pdf');
-      const legacyC143 = await saveImport(page, c143, 'legacy', [['C143', 'C142', '85']], offline);
-      await saveImport(page, c143, 'ld-v3', [['C143', 'C143', '337']], legacyC143);
+      const legacyC143 = await saveImport(page, c143, 'legacy', [['C143', 'C143', '337']], offline, false);
+      const directC143 = await saveImport(page, c143, 'ld-v3', [['C143', 'C143', '337']], legacyC143, false);
+      await saveImport(page, c143, '', [['C143', 'C143', '337']], directC143, false);
       // Seed mixed historical records with identical labels and varied provenance/status.
       await page.evaluate(async () => {
         const { loadState, saveState } = await import('./storage.js');
@@ -102,11 +105,19 @@ async function test() {
         const moduleId = '320TEST00000001';
         const manifest = { app: 'HGCAL OGP Import', schemaVersion: 1,
           source: { name: 'prior-report.pdf', sha256: 'b'.repeat(64), pageCount: 1, parser: 'QA' },
-          pages: [{ page: 1, moduleId, count: 5 }], detections: Array.from({ length: 5 }, (_, index) => ({
+          pages: [{ page: 1, moduleId, count: 6 }], detections: Array.from({ length: 6 }, (_, index) => ({
             moduleId, cell: 'C143', confidence: 0.64, page: 1, index: index + 1, caption: 'cell 143 conf 0.64', image: state.ogpImages[0]
           })) };
         const draft = prepareOgpImport(manifest, 'QA', undefined, 'ld-v3');
-        draft.rows.slice(0, 4).forEach(row => { row.mapping.numberingVersion = '2026-11-18'; });
+        const wrong = {...draft.rows[0].mapping, target: 'C142', wires: ['85', '86', '87'], numberingVersion: '2026-11-20-c143'};
+        draft.rows.slice(0, 4).forEach(row => {
+          row.mapping = wrong;
+          row.wire = row.originalWire = row.history[0].wire = '85';
+        });
+        const migrated = draft.rows[5];
+        migrated.mapping.numberingVersion = '2026-11-18';
+        draft.rows[5] = {...editOgpRow(migrated, {wire: '85', operator: 'QA', status: 'pending', note: '',
+          reason: 'OGP 编号对照 2026-11-20-c143：C143 → C142，W337 → W85'}), numberingUpdate: wrong};
         draft.rows[2] = setOgpCompletion(draft.rows[2], true, 'QA');
         draft.rows[3] = editOgpRow(draft.rows[3], { wire: '100', operator: 'QA', status: 'pending', note: '', reason: '机台核对' });
         await saveState(appendOgpImport(state, draft));
@@ -115,26 +126,33 @@ async function test() {
       await nav(page);
       const prior = await read(page);
       await page.locator('[data-act="ogp-numbering-preview"]').click();
-      const confirmations = page.locator('[data-ogp-legacy-id]');
-      assert.equal(await confirmations.count(), 2);
-      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 2);
+      const confirmations = page.locator('[data-ogp-c143-rollback-id]');
+      assert.equal(await confirmations.count(), 3);
+      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 3);
       const confirm = page.locator('[data-act="ogp-numbering-confirm"]');
       await confirm.click();
       await error(page).filter({ hasText: '请勾选' }).waitFor();
       assert.deepEqual(await read(page), prior);
       const selected = confirmations.first();
-      const selectedId = await selected.getAttribute('data-ogp-legacy-id');
+      const selectedId = await selected.getAttribute('data-ogp-c143-rollback-id');
+      const migrated = confirmations.last();
+      const migratedId = await migrated.getAttribute('data-ogp-c143-rollback-id');
       await selected.check();
+      await migrated.check();
       await confirm.click();
       await page.locator('.modal').waitFor({ state: 'hidden' });
       const updated = await read(page);
       assert.deepEqual(updated.ogpImages, prior.ogpImages);
-      assert.deepEqual(updated.ogpRows.filter(row => row.id !== selectedId), prior.ogpRows.filter(row => row.id !== selectedId));
+      assert.deepEqual(updated.ogpRows.filter(row => row.id !== selectedId && row.id !== migratedId), prior.ogpRows.filter(row => row.id !== selectedId && row.id !== migratedId));
       const original = prior.ogpRows.find(row => row.id === selectedId);
       const corrected = updated.ogpRows.find(row => row.id === selectedId);
       assert.deepEqual([corrected.mapping, corrected.originalWire, corrected.imageId, corrected.history[0]],
-        [original.mapping, '337', original.imageId, original.history[0]]);
-      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C142', '85']);
+        [original.mapping, '85', original.imageId, original.history[0]]);
+      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C143', '337']);
+      const beforeMigration = prior.ogpRows.find(row => row.id === migratedId);
+      const afterMigration = updated.ogpRows.find(row => row.id === migratedId);
+      assert.equal(afterMigration.wire, '337');
+      assert.deepEqual(afterMigration.history.slice(0, -1), beforeMigration.history);
       assert.deepEqual(errors, []);
       console.log('PASS: old numeric and split LD V3 labels, numbering collisions, original marked image, read-only failures and offline import at 390×844');
     } finally {

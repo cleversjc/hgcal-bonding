@@ -11,7 +11,7 @@ const { chromium } = require('playwright');
 const [pdfPath, portablePath, origin='http://127.0.0.1:8765/'] = process.argv.slice(2);
 if(!pdfPath||!portablePath)throw new Error('Pass the fixture PDF and independently preprocessed JSON');
 const expected = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/glue_leakage_1104.expected.json'),'utf8'));
-const expectedNumbering = {...require('./fixtures/ogp-numbering-2026-11-18.expected.json'), C143: ['C142', '85']};
+const expectedNumbering = require('./fixtures/ogp-numbering-2026-11-18.expected.json');
 const portable = JSON.parse(fs.readFileSync(portablePath,'utf8'));
 const out = path.resolve(process.env.BONDING_TEST_OUTPUT || '.dev-evidence');
 fs.mkdirSync(out,{recursive:true});

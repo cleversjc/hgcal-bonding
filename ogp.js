@@ -6,7 +6,8 @@ export const OGP_PARSER = 'hgcal-yolo-grid-v1';
 const OGP_IMAGE_DATA_LIMIT = 16 * 1024 * 1024;
 // Keep PNGs representable within the existing per-image JSON backup limit.
 export const OGP_PNG_MAX_BYTES = Math.floor((OGP_IMAGE_DATA_LIMIT - 'data:image/png;base64,'.length) / 4) * 3;
-export const OGP_NUMBERING_VERSION = '2026-11-20-c143';
+export const OGP_NUMBERING_VERSION = '2026-11-25-c143-revert';
+const REVERTED_OGP_NUMBERING_VERSION = '2026-11-20-c143';
 const PREVIOUS_OGP_NUMBERING_VERSION = '2026-11-18';
 const LD_V3_NUMBERING_VERSION = '2026-11-18-ld-v3-labels';
 
@@ -21,7 +22,6 @@ const OGP_TO_DATABASE = Object.freeze({
   C85: 'C69',
   C140: 'O',
   C142: 'C143',
-  C143: 'C142',
   C169: 'Q',
   C196: 'P'
 });
@@ -56,23 +56,31 @@ export function ogpLocation(row) {
   return row.numberingUpdate ?? row.mapping;
 }
 
-// Earlier imports could omit a numbering choice for C143, which was mapped
-// to itself under both modes. Require the user to verify the original report.
-export function requiresOgpLegacyConfirmation(row) {
+// A W85 entry from the reverted rule requires individual confirmation.
+export function requiresC143RollbackConfirmation(row) {
   return row.reportedCell === 'C143';
 }
 
 export function pendingOgpNumberingUpdate(row) {
-  if (row.mapping.numberingVersion === LD_V3_NUMBERING_VERSION || row.completedAt || row.status !== 'pending' || row.history.length !== 1 || row.wire !== row.originalWire || row.note || row.specialHandling) return null;
-  if (requiresOgpLegacyConfirmation(row) && (row.originalWire !== '337' ||
-      ![undefined, PREVIOUS_OGP_NUMBERING_VERSION].includes(row.mapping.numberingVersion))) return null;
-  return correctedOgpTarget(row.reportedCell) === ogpLocation(row).target ? null : mappedOgpLocation(row.reportedCell);
+  if (row.mapping.numberingVersion === LD_V3_NUMBERING_VERSION || row.completedAt || row.status !== 'pending' || row.note || row.specialHandling) return null;
+  const importedOnly = row.history.length === 1 && row.wire === row.originalWire;
+  const current = ogpLocation(row);
+  if (requiresC143RollbackConfirmation(row)) {
+    if (current.numberingVersion !== REVERTED_OGP_NUMBERING_VERSION || current.target !== 'C142' || row.wire !== '85') return null;
+    // An earlier confirmed numbering update is eligible if it is the only
+    // change since import. Later manual edits and completion stay untouched.
+    const last = row.history[1];
+    const migratedOnly = row.history.length === 2 && row.numberingUpdate === current && last.action === undefined &&
+      last.reason === 'OGP 编号对照 ' + REVERTED_OGP_NUMBERING_VERSION + '：C143 → C142，W337 → W85';
+    if (!importedOnly && !migratedOnly) return null;
+  } else if (!importedOnly) return null;
+  return correctedOgpTarget(row.reportedCell) === current.target ? null : mappedOgpLocation(row.reportedCell);
 }
 
-export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOString(), { confirmedLegacy = false } = {}) {
+export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOString(), { confirmedC143Rollback = false } = {}) {
   const location = pendingOgpNumberingUpdate(row);
   if (!location) fail('这条检测已处理或已更新编号，请重新预览。');
-  if (requiresOgpLegacyConfirmation(row) && !confirmedLegacy) fail('请先确认这条 C143 的原报告采用旧 OGP 编号。');
+  if (requiresC143RollbackConfirmation(row) && !confirmedC143Rollback) fail('请先确认将这条 C143 改回 W337。');
   const edited = editOgpRow(row, {
     wire: location.wires[0], status: row.status, operator, note: row.note,
     reason: 'OGP 编号对照 ' + location.numberingVersion + '：' + row.reportedCell + ' → ' + location.target + '，W' + row.wire + ' → W' + location.wires[0]
@@ -218,10 +226,10 @@ function validMapping(mapping, reportedCell) {
   if (!object(mapping) || !cell(mapping.target) || !Array.isArray(mapping.wires) || !mapping.wires.length ||
       !mapping.wires.every(wire) || !text(mapping.source, 2048) || !text(mapping.version, 1024)) return false;
   if (mapping.numberingVersion === undefined) return mapping.target === reportedCell;
-  if (![OGP_NUMBERING_VERSION, PREVIOUS_OGP_NUMBERING_VERSION, LD_V3_NUMBERING_VERSION].includes(mapping.numberingVersion)) return text(mapping.numberingVersion, 64);
-  const usesOriginalCell = mapping.numberingVersion === LD_V3_NUMBERING_VERSION ||
-    (mapping.numberingVersion === PREVIOUS_OGP_NUMBERING_VERSION && reportedCell === 'C143');
-  const expected = frontLocations.get(usesOriginalCell ? reportedCell : correctedOgpTarget(reportedCell));
+  if (![OGP_NUMBERING_VERSION, PREVIOUS_OGP_NUMBERING_VERSION, REVERTED_OGP_NUMBERING_VERSION, LD_V3_NUMBERING_VERSION].includes(mapping.numberingVersion)) return text(mapping.numberingVersion, 64);
+  const target = mapping.numberingVersion === LD_V3_NUMBERING_VERSION ? reportedCell :
+    mapping.numberingVersion === REVERTED_OGP_NUMBERING_VERSION && reportedCell === 'C143' ? 'C142' : correctedOgpTarget(reportedCell);
+  const expected = frontLocations.get(target);
   return mapping.target === expected.target &&
     mapping.wires.length === expected.wires.length && mapping.wires.every((value, index) => value === expected.wires[index]);
 }
