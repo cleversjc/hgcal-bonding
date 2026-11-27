@@ -1,4 +1,5 @@
-import { BUILTIN_MAPPING } from './domain-data.js';
+import { BUILTIN_MAPPING, FIELD_VERIFIED_WIRES } from './domain-data.js';
+import { FRONT_REFERENCE_MAPPING } from './channel-map-data.js';
 import { csvEncode, normalizeTarget, normalizeWire } from './mapping.js';
 
 export const OGP_STATUSES = { pending: '待确认', normal: '正常', anomaly: '确认异常' };
@@ -6,14 +7,17 @@ export const OGP_PARSER = 'hgcal-yolo-grid-v1';
 const OGP_IMAGE_DATA_LIMIT = 16 * 1024 * 1024;
 // Keep PNGs representable within the existing per-image JSON backup limit.
 export const OGP_PNG_MAX_BYTES = Math.floor((OGP_IMAGE_DATA_LIMIT - 'data:image/png;base64,'.length) / 4) * 3;
-export const OGP_NUMBERING_VERSION = '2026-11-27-c143-w85';
+const LAST_LEGACY_VERSION = '2026-11-27-c143-w85';
+export const OGP_NUMBERING_VERSION = '2026-11-27-ld-v3-wire-groups';
 const LD_V3_NUMBERING_VERSION = '2026-11-27-ld-v3-labels';
 const PREVIOUS_LD_V3_VERSION = '2026-11-18-ld-v3-labels';
 const HISTORICAL_C143_TARGETS = new Map([
   ['2026-11-18', 'C143'],
   ['2026-11-20-c143', 'C142'],
   ['2026-11-25-c143-revert', 'C143'],
-  [PREVIOUS_LD_V3_VERSION, 'C143']
+  [PREVIOUS_LD_V3_VERSION, 'C143'],
+  [LD_V3_NUMBERING_VERSION, 'C142'],
+  [LAST_LEGACY_VERSION, 'C142']
 ]);
 
 // Earlier imports may have saved these aliases. Keep them for historical records and backups.
@@ -31,6 +35,7 @@ const OGP_TO_DATABASE = Object.freeze({
   C196: 'P'
 });
 const frontLocations = new Map(BUILTIN_MAPPING.filter(entry => entry.side === 'front').map(entry => [entry.target, entry]));
+const originalLocations = new Map(FRONT_REFERENCE_MAPPING.map(entry => [entry.target, entry]));
 const uid = () => crypto.randomUUID();
 const fail = message => { throw new Error(message); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -50,32 +55,41 @@ function usesLdV3Labels(version) {
 }
 
 function reportTarget(reportedCell, version) {
-  // This exception applies to the printed label, never to the result of a C142 lookup.
-  if (reportedCell === 'C143') return HISTORICAL_C143_TARGETS.get(version) ?? 'C142';
+  if (version === OGP_NUMBERING_VERSION) return reportedCell;
+  if (reportedCell === 'C143') return HISTORICAL_C143_TARGETS.get(version);
   return usesLdV3Labels(version) ? reportedCell : (OGP_TO_DATABASE[reportedCell] ?? reportedCell);
 }
 
-function mappedOgpLocation(reportedCell, version) {
-  const target = reportTarget(reportedCell, version);
+function locationEntry(reportedCell, version) {
+  const table = version === OGP_NUMBERING_VERSION ? frontLocations : originalLocations;
+  return table.get(reportTarget(reportedCell, version));
+}
+
+function mappedOgpLocation(target, version) {
   const entry = frontLocations.get(target);
-  if (!entry?.wires.length) fail(reportedCell + ' 没有 LD V3 映射，未保存任何检测。');
-  // An older app must still recognize unaffected LD V3 labels after a rollback.
-  const numberingVersion = version === LD_V3_NUMBERING_VERSION && reportedCell !== 'C143' ? PREVIOUS_LD_V3_VERSION : version;
-  return { target, wires: entry.wires.map(String), source: entry.source, version: entry.version, numberingVersion };
+  if (!entry?.wires.length) fail(target + ' 没有 LD V3 映射，未保存任何检测。');
+  return { target: entry.target, wires: [...entry.wires], source: entry.source, version: entry.version, numberingVersion: version };
 }
 
 export function ogpLocation(row) {
   return row.numberingUpdate ?? row.mapping;
 }
 
-// Older releases recorded these two mapping changes as edits with fixed audit reasons.
-function hasOnlyHistoricalC143Updates(row) {
-  if (row.numberingUpdate?.numberingVersion !== '2026-11-25-c143-revert') return false;
-  return row.history.length > 1 && row.history.slice(1).every((event, index) => {
+function updateReason(version, reportedCell, target, from, to) {
+  return 'OGP 编号对照 ' + version + '：' + reportedCell + ' → ' + target + '，W' + from + ' → W' + to;
+}
+
+// Older releases saved confirmed table updates as edits with a versioned reason.
+function hasOnlyTableUpdates(row) {
+  if (!HISTORICAL_C143_TARGETS.has(row.numberingUpdate?.numberingVersion)) return false;
+  return row.history.slice(1).every((event, index) => {
     if (event.action || event.status !== 'pending' || event.note || event.specialHandling) return false;
-    const from = row.history[index].wire;
-    return (from === '85' && event.wire === '337' && event.reason === 'OGP 编号对照 2026-11-25-c143-revert：C143 → C143，W85 → W337') ||
-      (from === '337' && event.wire === '85' && event.reason === 'OGP 编号对照 2026-11-20-c143：C143 → C142，W337 → W85');
+    const versions = index === row.history.length - 2 ? [row.numberingUpdate.numberingVersion] : HISTORICAL_C143_TARGETS.keys();
+    for (const version of versions) {
+      const entry = locationEntry(row.reportedCell, version);
+      if (entry.wires[0] === event.wire && event.reason === updateReason(version, row.reportedCell, entry.target, row.history[index].wire, event.wire)) return true;
+    }
+    return false;
   });
 }
 
@@ -83,23 +97,24 @@ export function pendingOgpNumberingUpdate(row) {
   if (row.completedAt || row.status !== 'pending' || row.note || row.specialHandling) return null;
   const importedOnly = row.history.length === 1 && row.wire === row.originalWire;
   const current = ogpLocation(row);
-  const version = usesLdV3Labels(row.mapping.numberingVersion) ? LD_V3_NUMBERING_VERSION : OGP_NUMBERING_VERSION;
-  if (current.target === reportTarget(row.reportedCell, version)) return null;
-  if (row.reportedCell === 'C143') {
-    if (current.target !== 'C143' || row.wire !== '337' ||
-        (current.numberingVersion !== undefined && HISTORICAL_C143_TARGETS.get(current.numberingVersion) !== 'C143')) return null;
-    if (!importedOnly && !hasOnlyHistoricalC143Updates(row)) return null;
-  } else if (!importedOnly || version === LD_V3_NUMBERING_VERSION) return null;
-  return mappedOgpLocation(row.reportedCell, version);
+  if (current.numberingVersion !== undefined && !HISTORICAL_C143_TARGETS.has(current.numberingVersion)) return null;
+  if (Object.hasOwn(FIELD_VERIFIED_WIRES, row.reportedCell)) {
+    if (row.wire !== originalLocations.get(current.target)?.wires[0] || (!importedOnly && !hasOnlyTableUpdates(row))) return null;
+    const location = mappedOgpLocation(row.reportedCell, OGP_NUMBERING_VERSION);
+    return current.target === location.target && row.wire === location.wires[0] ? null : location;
+  }
+  if (!importedOnly || usesLdV3Labels(row.mapping.numberingVersion)) return null;
+  const target = reportTarget(row.reportedCell, LAST_LEGACY_VERSION);
+  return current.target === target ? null : mappedOgpLocation(target, LAST_LEGACY_VERSION);
 }
 
-export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOString(), { confirmedC143 = false } = {}) {
+export function applyOgpNumberingUpdate(row, operator, now = new Date().toISOString(), { confirmedLocation = false } = {}) {
   const location = pendingOgpNumberingUpdate(row);
   if (!location) fail('这条检测已处理或已更新编号，请重新预览。');
-  if (row.reportedCell === 'C143' && !confirmedC143) fail('请先确认将这条 C143 定位到 W85。');
+  if (location.numberingVersion === OGP_NUMBERING_VERSION && !confirmedLocation) fail('请先确认将这条 ' + row.reportedCell + ' 定位到 W' + location.wires[0] + '。');
   const edited = editOgpRow(row, {
     wire: location.wires[0], status: row.status, operator, note: row.note,
-    reason: 'OGP 编号对照 ' + location.numberingVersion + '：' + row.reportedCell + ' → ' + location.target + '，W' + row.wire + ' → W' + location.wires[0]
+    reason: updateReason(location.numberingVersion, row.reportedCell, location.target, row.wire, location.wires[0])
   }, now);
   return { ...edited, numberingUpdate: location };
 }
@@ -145,7 +160,9 @@ export function prepareOgpImport(manifest, operator, now = new Date().toISOStrin
   if (!text(operator, 60)) fail('请填写导入人。');
   const importId = uid(), images = [], rows = [];
   for (const detection of manifest.detections) {
-    const mapping = mappedOgpLocation(detection.cell, LD_V3_NUMBERING_VERSION);
+    // Unchanged labels retain their existing snapshot version for older installations.
+    const version = Object.hasOwn(FIELD_VERIFIED_WIRES, detection.cell) ? OGP_NUMBERING_VERSION : PREVIOUS_LD_V3_VERSION;
+    const mapping = mappedOgpLocation(detection.cell, version);
     const originalWire = mapping.wires[0], imageId = uid();
     images.push({ ...detection.image, id: imageId });
     rows.push({
@@ -239,8 +256,8 @@ function validMapping(mapping, reportedCell) {
       !mapping.wires.every(wire) || !text(mapping.source, 2048) || !text(mapping.version, 1024)) return false;
   const version = mapping.numberingVersion;
   if (version === undefined) return mapping.target === reportedCell;
-  if (version !== OGP_NUMBERING_VERSION && version !== LD_V3_NUMBERING_VERSION && !HISTORICAL_C143_TARGETS.has(version)) return text(version, 64);
-  const expected = frontLocations.get(reportTarget(reportedCell, version));
+  if (version !== OGP_NUMBERING_VERSION && !HISTORICAL_C143_TARGETS.has(version)) return text(version, 64);
+  const expected = locationEntry(reportedCell, version);
   return mapping.target === expected.target &&
     mapping.wires.length === expected.wires.length && mapping.wires.every((value, index) => value === expected.wires[index]);
 }

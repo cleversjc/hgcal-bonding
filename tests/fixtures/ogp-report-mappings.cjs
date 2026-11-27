@@ -1,2 +1,2 @@
-// New imports use each printed LD V3 target directly, with this field correction.
-module.exports = { C143: ['C142', '85'] };
+// Field-verified report label, database target and representative Wire.
+module.exports = { C142: ['C142', '337'], C143: ['C143', '85'] };

@@ -82,7 +82,7 @@ let browser;
   }
   assert.deepEqual(counts,expected.moduleCounts);
   pass('All six PDF pages, four module IDs, 121 labels/confidences and exactly one first Wire',counts);
-  assert.deepEqual(s.rows.filter(row=>row.reportedCell==='C142').map(row=>row.wire), ['85','85','85']);
+  assert.deepEqual(s.rows.filter(row=>row.reportedCell==='C142').map(row=>row.wire), ['337','337','337']);
   pass('Historical numeric PDF imported with direct LD V3 labels');
   const pixelResult=await page.evaluate(async originals=>{
     const state=await(await import('./storage.js')).loadState();const report=[];

@@ -11,10 +11,10 @@ const root = path.resolve(__dirname, '..');
 const old = path.resolve(process.argv[2]);
 const isDev = process.argv[3] === 'dev';
 const entry = isDev ? '' : 'stable-v1/';
-const priorVersion = isDev ? '2026-11-27-ogp-c143-w85-v1' : 'stable-1.2.0';
-const currentVersion = isDev ? '2026-11-27-ogp-ld-v3-only-v1' : 'stable-1.2.1';
-const priorLabel = isDev ? /C143 定位 W85/ : /1\.2\.0/;
-const priorWire = isDev ? '337' : '85';
+const priorVersion = isDev ? '2026-11-27-ogp-ld-v3-only-v1' : 'stable-1.2.0';
+const currentVersion = isDev ? '2026-11-27-ld-v3-cell-wires-v1' : 'stable-1.2.1';
+const priorLabel = isDev ? /按 LD V3 直接解析/ : /1\.2\.0/;
+const priorWire = '85';
 const cachePrefix = isDev ? 'hgcal-bonding-shell-' : 'hgcal-bonding-stable-v1-shell-';
 const fieldKey = isDev ? 'hgcal-bonding-field-session-v1' : 'hgcal-bonding-stable-field-session-v1';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -66,15 +66,47 @@ async function test() {
         await action(page, 'ogp-confirm').click();
         await page.locator('.modal').waitFor({ state: 'hidden' });
       }
+      async function recordGroup(page, target, wires, otherWire) {
+        await nav(page, 'lookup');
+        const search = async input => {
+          await page.locator('#query-input').fill(input);
+          await page.locator('#query-input').press('Enter');
+        };
+        await page.locator('[data-act="query-mode"][data-mode="cell"]').click();
+        await search(target);
+        assert.deepEqual(await page.locator('.wire-chips button').allTextContents(), wires.map(wire => 'W' + wire));
+        await page.locator('[data-act="query-mode"][data-mode="wire"]').click();
+        for (const wire of wires) {
+          await search(wire);
+          assert.equal(await page.locator('.selection-heading').textContent(), 'CELL' + target.slice(1));
+          assert.equal(await page.locator('.wire-chip.active').textContent(), 'W' + wire);
+        }
+        await page.locator('.selected-card [data-act="new-record"]').click();
+        assert.equal(await page.locator('#issue-target').inputValue(), target);
+        await page.locator('#issue-wires').fill(wires.join(','));
+        await page.locator('#issue-pull-tests').fill(otherWire + ', 5.1');
+        await page.locator('#save-record').click();
+        await page.locator('#form-error').filter({hasText: '不一致'}).waitFor();
+        await page.locator('#issue-pull-tests').fill(wires.map(wire => wire + ', 5.2, Heel').join('\n'));
+        await page.locator('#save-record').click();
+        await page.locator('.modal').waitFor({state: 'hidden'});
+        const record = (await read(page)).records.at(-1);
+        assert.deepEqual([record.target, record.wires, record.mapping.expectedWires], [target, wires, wires]);
+        assert.deepEqual(record.pullTests.map(test => [test.wire, test.force]), wires.map(wire => [wire, 5.2]));
+      }
       const oldPage = await open(url);
       await nav(oldPage, 'mapping');
       assert.match(await oldPage.locator('.release-label').innerText(), priorLabel);
       await nav(oldPage, 'ogp');
       await ready(oldPage);
       await startImport(oldPage);
-      await oldPage.locator('#ogp-numbering-mode').selectOption('legacy');
+      if (!isDev) await oldPage.locator('#ogp-numbering-mode').selectOption('legacy');
       await parse(oldPage);
       await save(oldPage);
+      if (isDev) {
+        await recordGroup(oldPage, 'C142', ['85', '86', '87'], '337');
+        await nav(oldPage, 'ogp');
+      }
       const initial = await read(oldPage);
       assert.equal(initial.ogpRows[0].wire, priorWire);
       assert.equal(initial.ogpImages.length, isDev ? 2 : 1);
@@ -97,7 +129,7 @@ async function test() {
       }
       const page = await activate(oldPage, root, priorVersion);
       await nav(page, 'mapping');
-      assert.match(await page.locator('.release-label').innerText(), isDev ? /按 LD V3 直接解析/ : /1\.2\.1/);
+      assert.match(await page.locator('.release-label').innerText(), isDev ? /C142、C143 线号修订/ : /1\.2\.1/);
       await nav(page, 'ogp');
       assert.deepEqual(await read(page), initial);
       assert.equal(await page.locator('#ogp-status').inputValue(), 'all');
@@ -116,11 +148,24 @@ async function test() {
         await save(page);
         const newRows = (await read(page)).ogpRows.slice(before.ogpRows.length);
         assert.deepEqual(newRows.map(row => [row.reportedCell, row.mapping.target, row.wire]), isDev
-          ? [['C142', 'C142', '85'], ['C143', 'C142', '85']] : [['C143', 'C143', '337']]);
+          ? [['C142', 'C142', '337'], ['C143', 'C143', '85']] : [['C143', 'C143', '337']]);
       }
       if (isDev) {
-        assert.equal(await action(page, 'ogp-numbering-preview').count(), 0);
         assert.deepEqual((await read(page)).ogpRows.slice(0, initial.ogpRows.length), initial.ogpRows);
+        await action(page, 'ogp-numbering-preview').click();
+        const list = page.locator('.ogp-numbering-list');
+        assert.equal(await list.locator('[data-ogp-location-id]:checked').count(), 0);
+        for (const change of ['C142 · W85 → C142 · W337', 'C142 · W85 → C143 · W85']) {
+          await list.locator('li').filter({hasText: change}).getByRole('checkbox').check();
+        }
+        await action(page, 'ogp-numbering-confirm').click();
+        await page.locator('.modal').waitFor({state: 'hidden'});
+        assert.deepEqual((await read(page)).ogpRows.slice(0, 2).map(row => [row.numberingUpdate.target, row.wire, row.originalWire]),
+          [['C142', '337', '85'], ['C143', '85', '85']]);
+        await recordGroup(page, 'C143', ['85', '86', '87'], '337');
+        await recordGroup(page, 'C142', ['337', '338', '339'], '85');
+        assert.deepEqual((await read(page)).records[0], initial.records[0]);
+        await nav(page, 'ogp');
       } else {
         await action(page, 'ogp-numbering-preview').click();
         const choice = page.locator('[data-ogp-c143-rollback-id]');

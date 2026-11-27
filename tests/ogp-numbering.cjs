@@ -49,7 +49,7 @@ async function test() {
     const original = await read();
     await preview();
     assert.equal(await page.locator('.ogp-numbering-list li').count(), 9);
-    assert.match(await page.locator('.ogp-numbering-list').innerText(), /OGP C3 → M · W10 → W607/);
+    assert.match(await page.locator('.ogp-numbering-list').innerText(), /C3 · W10 → M · W607/);
     assert.deepEqual(await read(), original);
     await close();
     assert.deepEqual(await read(), original);
@@ -78,6 +78,7 @@ async function test() {
     await page.locator('.shell').waitFor();
     await preview();
     assert.equal(await page.locator('.ogp-numbering-list li').count(), 8);
+    await page.locator('.ogp-numbering-list li').filter({hasText: '报告 C142 ·'}).getByRole('checkbox').check();
     await page.screenshot({ path: path.join(out, 'numbering-preview.png'), animations: 'disabled' });
     await confirm();
     await closed();
@@ -87,7 +88,7 @@ async function test() {
       const before = concurrent.ogpRows.find(previous => previous.id === row.id);
       if (before.history.length > 1) { assert.deepEqual(row, before); continue; }
       assert.deepEqual([row.mapping, row.originalWire, row.imageId, row.history[0]], [before.mapping, before.originalWire, before.imageId, before.history[0]]);
-      assert.deepEqual([row.numberingUpdate.target, row.wire], expected[row.reportedCell]);
+      assert.deepEqual([row.numberingUpdate.target, row.wire], current[row.reportedCell] ?? expected[row.reportedCell]);
       assert.match(row.history.at(-1).reason, /OGP 编号对照/);
     }
     assert.equal(await page.locator('[data-act="ogp-numbering-preview"]').count(), 0);
@@ -130,8 +131,8 @@ async function test() {
     const csv = fs.readFileSync(csvPath, 'utf8');
     assert.match(csv, /"mapped_target","ogp_numbering_version"/);
     assert.ok(csv.includes(',"M","2026-11-27-c143-w85"'));
-    assert.match(csv, /"C142","85","85",[^\r\n]+,"C142","2026-11-18-ld-v3-labels"/);
-    assert.match(csv, /"C143","85","85",[^\r\n]+,"C142","2026-11-27-ld-v3-labels"/);
+    assert.match(csv, /"C142","337","337",[^\r\n]+,"C142","2026-11-27-ld-v3-wire-groups"/);
+    assert.match(csv, /"C143","85","85",[^\r\n]+,"C143","2026-11-27-ld-v3-wire-groups"/);
     assert.equal(await page.evaluate(async () => {
       const storage = await import('./storage.js');
       const { createArchive, readArchive } = await import('./archive.js');

@@ -26,7 +26,8 @@ async function saveImport(page, file, expected, before) {
   await page.locator('#ogp-confirmed').waitFor();
   assert.equal(await page.locator('.ogp-preview-item').count(), expected.length);
   if (expected.some(([label]) => label === 'C143')) {
-    assert.match(await page.locator('.ogp-preview-item').filter({ hasText: 'OGP C143 → C142' }).first().innerText(), /W85\b/);
+    const item = page.locator('.ogp-preview-item').filter({ hasText: 'C143 · YOLO confidence' });
+    assert.match(await item.locator('b').innerText(), /· W85$/);
   }
   assert.deepEqual(await read(page), before);
   await page.locator('#ogp-confirmed').check();
@@ -91,10 +92,11 @@ async function test() {
       await nav(page);
       const offline = await saveImport(page, path.join(fixtures, 'new.pdf'), newRows, revised);
       assert.deepEqual(offline.ogpImages, revised.ogpImages);
-      const correctedRows = [['C142', 'C142', '85'], ['C143', 'C142', '85']];
+      const correctedRows = [['C142', 'C142', '337'], ['C143', 'C143', '85']];
       const automatic = await saveImport(page, path.join(fixtures, 'c142-c143.pdf'), correctedRows, offline);
-      const w85Items = page.locator('.ogp-item').filter({hasText: /\bW85\b/});
-      assert.equal(await w85Items.locator('.ogp-duplicate').count(), 2);
+      const pairItems = page.locator('.ogp-item').filter({has: page.locator('.ogp-wire-row > b', {hasText: /^W(85|337)$/})});
+      assert.equal(await pairItems.count(), 2);
+      assert.equal(await pairItems.locator('.ogp-duplicate').count(), 0);
       const report = automatic.ogpImports.at(-1);
       const portable = { app: 'HGCAL OGP Import', schemaVersion: 1, source: report.source, pages: report.pages,
         detections: automatic.ogpRows.filter(row => row.importId === report.id).map(row => ({
@@ -103,6 +105,7 @@ async function test() {
         })) };
       const json = { name: 'c142-c143.ogp.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(portable)) };
       await saveImport(page, json, correctedRows, automatic);
+      assert.equal(await pairItems.locator('.ogp-duplicate').count(), 4);
       // Seed mixed historical records with identical labels and varied provenance/status.
       await page.evaluate(async () => {
         const { loadState, saveState } = await import('./storage.js');
@@ -115,7 +118,8 @@ async function test() {
             moduleId, cell: 'C143', confidence: 0.64, page: 1, index: index + 1, caption: 'cell 143 conf 0.64', image: state.ogpImages[0]
           })) };
         const draft = prepareOgpImport(manifest, 'QA');
-        const nov20 = {...draft.rows[0].mapping, numberingVersion: '2026-11-20-c143'};
+        const { FRONT_REFERENCE_MAPPING } = await import('./channel-map-data.js');
+        const nov20 = {...FRONT_REFERENCE_MAPPING.find(entry => entry.target === 'C142'), numberingVersion: '2026-11-20-c143'};
         const nov25 = {...nov20, target: 'C143', wires: ['337','338','339'], numberingVersion: '2026-11-25-c143-revert'};
         const asImported = (row, mapping) => {
           const wire = mapping.wires[0];
@@ -139,19 +143,20 @@ async function test() {
       await nav(page);
       const prior = await read(page);
       await page.locator('[data-act="ogp-numbering-preview"]').click();
-      const confirmations = page.locator('[data-ogp-c143-id]');
-      assert.equal(await confirmations.count(), 4);
-      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 4);
+      const confirmations = page.locator('[data-ogp-location-id]');
+      assert.equal(await confirmations.count(), 5);
+      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 5);
+      assert.match(await page.locator('.ogp-numbering-list').innerText(), /C142 · W85 → C143 · W85/);
       const confirm = page.locator('[data-act="ogp-numbering-confirm"]');
       await confirm.click();
       await error(page).filter({ hasText: '请勾选' }).waitFor();
       assert.deepEqual(await read(page), prior);
-      const selected = confirmations.first();
-      const selectedId = await selected.getAttribute('data-ogp-c143-id');
-      const migrated = confirmations.last();
-      const migratedId = await migrated.getAttribute('data-ogp-c143-id');
-      await selected.check();
-      await migrated.check();
+      const historyReport = prior.ogpImports.find(report => report.source.name === 'prior-report.pdf');
+      const historyRows = prior.ogpRows.filter(row => row.importId === historyReport.id);
+      const selectedId = historyRows.find(row => row.sourceIndex === 1).id;
+      const migratedId = historyRows.find(row => row.sourceIndex === 7).id;
+      await page.locator('[data-ogp-location-id="' + selectedId + '"]').check();
+      await page.locator('[data-ogp-location-id="' + migratedId + '"]').check();
       await confirm.click();
       await page.locator('.modal').waitFor({ state: 'hidden' });
       const updated = await read(page);
@@ -161,14 +166,14 @@ async function test() {
       const corrected = updated.ogpRows.find(row => row.id === selectedId);
       assert.deepEqual([corrected.mapping, corrected.originalWire, corrected.imageId, corrected.history[0]],
         [original.mapping, '337', original.imageId, original.history[0]]);
-      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C142', '85']);
+      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C143', '85']);
       const beforeMigration = prior.ogpRows.find(row => row.id === migratedId);
       const afterMigration = updated.ogpRows.find(row => row.id === migratedId);
       assert.equal(afterMigration.wire, '85');
       assert.deepEqual(afterMigration.history.slice(0, -1), beforeMigration.history);
       assert.deepEqual(afterMigration.history.map(event => event.wire), ['337', '85', '337', '85']);
       assert.deepEqual(errors, []);
-      console.log('PASS: direct numeric and letter labels, C142/C143 duplicate W85 in PDF and JSON, marked image, preview and offline import at 390×844');
+      console.log('PASS: direct PDF and JSON labels, independent C142/W337 and C143/W85, duplicate re-import, confirmed historical updates, marked image and offline import at 390×844');
     } finally {
       await browser.close();
     }

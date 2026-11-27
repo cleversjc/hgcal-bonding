@@ -6,6 +6,8 @@ const path = require('node:path');
   const ogp = await import('../ogp.js');
   const storage = await import('../storage.js');
   const { BUILTIN_MAPPING, BACKSIDE_ORDER } = await import('../domain-data.js');
+  const { FRONT_REFERENCE_MAPPING } = await import('../channel-map-data.js');
+  const { resolveStoredMappings, lookupTarget, lookupWire } = await import('../mapping.js');
   const { parseCaptionItems, pairCaptions } = await import('../ogp-pdf.js');
   const { prepareOgpImport: prepareLegacyImport } = await import('../previous-dev/ogp.js');
   const expectedNumbering = require('./fixtures/ogp-report-mappings.cjs');
@@ -33,33 +35,47 @@ const path = require('node:path');
     detections: letterLocations.map(({target}, index) => ({ ...manifest.detections[index], cell: target, caption: 'cell '+target+' conf 0.52' })) };
   const letterRows = ogp.prepareOgpImport(letters, 'QA', now).rows;
   assert.deepEqual(letterRows.map(row => [row.mapping.target, row.wire]), letterLocations.map(entry => [entry.target, entry.wires[0]]));
-  assert.deepEqual(signals.filter(entry => ['C142','C143'].includes(entry.target)).map(entry => entry.wires[0]), ['85','337']);
-  assert.equal(draft.rows.find(row => row.reportedCell === 'C142').mapping.numberingVersion, '2026-11-18-ld-v3-labels');
+  const verified = {C142: ['337', '338', '339'], C143: ['85', '86', '87']};
+  const earlierTable = FRONT_REFERENCE_MAPPING.filter(entry => Object.hasOwn(verified, entry.target));
+  assert.deepEqual(earlierTable.map(entry => entry.wires), [verified.C143, verified.C142]);
+  const resolved = resolveStoredMappings(BUILTIN_MAPPING, earlierTable);
+  assert.equal(resolved.conflicts.length, 2);
+  assert.equal(new Set(resolved.entries.flatMap(entry => entry.wires)).size, 630);
+  for (const [target, wires] of Object.entries(verified)) {
+    assert.deepEqual(lookupTarget(resolved.entries, target).wires, wires);
+    for (const wire of wires) assert.equal(lookupWire(resolved.entries, wire).target, target);
+    const row = draft.rows.find(row => row.reportedCell === target);
+    assert.equal(row.mapping.numberingVersion, ogp.OGP_NUMBERING_VERSION);
+    assert.match(row.mapping.source, /现场核对/);
+  }
+  assert.deepEqual(BUILTIN_MAPPING.filter(entry => !verified[entry.target]), FRONT_REFERENCE_MAPPING.filter(entry => !verified[entry.target]));
   const directState = ogp.appendOgpImport(storage.emptyState(), draft);
   assert.deepEqual(storage.readBackup(JSON.stringify(storage.makeBackup(directState))).ogpRows, directState.ogpRows);
-  const directC143 = directState.ogpRows.find(row => row.reportedCell === 'C143');
   const stateWith = changed => ({ ...directState, ogpRows: directState.ogpRows.map(row => row.id === changed.id ? changed : row) });
   const restore = state => storage.readBackup(JSON.stringify(storage.makeBackup(state)));
-  for (const numberingVersion of [undefined, '2026-11-18', '2026-11-25-c143-revert', '2026-11-18-ld-v3-labels']) {
-    const mapping = { ...directC143.mapping, target: 'C143', wires: ['337','338','339'] };
-    if (numberingVersion) mapping.numberingVersion = numberingVersion;
-    else delete mapping.numberingVersion;
-    const prior = { ...directC143, mapping, wire: '337', originalWire: '337', history: [{ ...directC143.history[0], wire: '337' }] };
-    assert.deepEqual(restore(stateWith(prior)), stateWith(prior));
-    assert.equal(ogp.pendingOgpNumberingUpdate(prior).target, 'C142');
-    assert.throws(() => ogp.applyOgpNumberingUpdate(prior, 'QA', now), /确认将这条 C143/);
-    const corrected = ogp.applyOgpNumberingUpdate(prior, 'QA', now, { confirmedC143: true });
-    assert.deepEqual([corrected.mapping, corrected.originalWire, corrected.imageId, corrected.history[0]],
-      [prior.mapping, '337', prior.imageId, prior.history[0]]);
-    assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C142', '85']);
-    assert.equal(ogp.pendingOgpNumberingUpdate(corrected), null);
-    assert.deepEqual(restore(stateWith(corrected)), stateWith(corrected));
-    const wrongVersion = { ...prior, mapping: { ...mapping, numberingVersion: ogp.OGP_NUMBERING_VERSION } };
-    assert.throws(() => restore(stateWith(wrongVersion)), /原始映射/);
+  // The two columns name the database targets actually stored for printed C142 and C143.
+  for (const [numberingVersion, old142, old143] of [
+    [undefined, 'C142', 'C143'], ['2026-11-18', 'C143', 'C143'], ['2026-11-20-c143', 'C143', 'C142'],
+    ['2026-11-25-c143-revert', 'C143', 'C143'], ['2026-11-18-ld-v3-labels', 'C142', 'C143'],
+    ['2026-11-27-ld-v3-labels', 'C142', 'C142'], ['2026-11-27-c143-w85', 'C143', 'C142']
+  ]) {
+    for (const [reported, historicalTarget] of [['C142', old142], ['C143', old143]]) {
+      const row = directState.ogpRows.find(row => row.reportedCell === reported);
+      const {target, wires, source, version} = lookupTarget(earlierTable, historicalTarget);
+      const mapping = {target, wires, source, version};
+      if (numberingVersion) mapping.numberingVersion = numberingVersion;
+      const prior = {...row, mapping, wire: wires[0], originalWire: wires[0], history: [{...row.history[0], wire: wires[0]}]};
+      assert.deepEqual(restore(stateWith(prior)), stateWith(prior));
+      assert.equal(ogp.pendingOgpNumberingUpdate(prior).target, reported);
+      assert.throws(() => ogp.applyOgpNumberingUpdate(prior, 'QA', now), /请先确认/);
+      const corrected = ogp.applyOgpNumberingUpdate(prior, 'QA', now, {confirmedLocation: true});
+      assert.deepEqual([corrected.mapping, corrected.originalWire, corrected.imageId, corrected.history[0]], [mapping, wires[0], prior.imageId, prior.history[0]]);
+      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], expectedNumbering[reported]);
+      assert.equal(ogp.pendingOgpNumberingUpdate(corrected), null);
+      assert.deepEqual(restore(stateWith(corrected)), stateWith(corrected));
+      assert.throws(() => restore(stateWith({...prior, mapping: {...mapping, numberingVersion: ogp.OGP_NUMBERING_VERSION}})), /原始映射/);
+    }
   }
-  const historicalW85 = { ...directC143, mapping: { ...directC143.mapping, numberingVersion: '2026-11-20-c143' } };
-  assert.deepEqual(restore(stateWith(historicalW85)), stateWith(historicalW85));
-  assert.equal(ogp.pendingOgpNumberingUpdate(historicalW85), null);
   const original = draft.rows.find(r=>r.reportedCell==='C111');
   const edited = ogp.editOgpRow(original,{wire:'W25',operator:'QA2',status:'normal',note:'看图确认',reason:'现场核对'},'2026-11-04T12:01:00.000Z');
   assert.equal(original.wire,'211'); assert.equal(edited.wire,'25'); assert.equal(edited.originalWire,'211');
@@ -130,7 +146,7 @@ const path = require('node:path');
   const duplicateManifest=structuredClone(manifest); duplicateManifest.detections.push({...duplicateManifest.detections[0],index:199}); duplicateManifest.pages[0].count++;
   const repeatedCell=ogp.prepareOgpImport(duplicateManifest,'QA',now);
   assert.equal(repeatedCell.rows.length,199);
-  const expectedDuplicates=new Set([manifest.detections[0].cell, 'C142', 'C143']);
+  const expectedDuplicates=new Set([manifest.detections[0].cell]);
   assert.deepEqual(ogp.duplicateOgpWires(repeatedCell.rows),new Set(repeatedCell.rows.filter(row=>expectedDuplicates.has(row.reportedCell)).map(row=>row.id)));
   const legacyRow=prepareLegacyImport(manifest,'QA',now).rows.find(row=>row.reportedCell==='C3');
   const updated=ogp.applyOgpNumberingUpdate(legacyRow,'QA','2026-11-18T12:01:00.000Z');
@@ -155,5 +171,5 @@ const path = require('node:path');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8'),mobile=fs.readFileSync(path.join(__dirname,'../mobile-app.js'),'utf8');
   assert.equal(sw.match(/SHELL_VERSION = '([^']+)'/)[1],mobile.match(/SHELL_VERSION = '([^']+)'/)[1]);
   assert.ok(sw.includes('pdf.worker.min.mjs')); assert.ok(sw.includes('ogp-pdf.js')); assert.ok(!/\.skipWaiting\(/.test(sw));
-  console.log('PASS: 198 signal and 12 letter labels with direct LD V3 import, C142/C143 W85, historical mappings, duplicate flags, audit, backups, CSV and backside order');
+  console.log('PASS: all 210 front targets, 630 unique wires, corrected pairs in both directions, historical snapshots, direct OGP import, audit, backups, CSV and backside order');
 })().catch(error=>{console.error(error);process.exitCode=1;});
