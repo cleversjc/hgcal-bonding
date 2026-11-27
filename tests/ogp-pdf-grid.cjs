@@ -17,16 +17,11 @@ async function openImport(page, file) {
   await page.locator('[data-act="ogp-import"]').first().click();
   await page.locator('#ogp-file').setInputFiles(file);
   await page.locator('#ogp-operator').fill('PDF QA');
+  assert.equal(await page.locator('#ogp-import-form select').count(), 0);
 }
 
-async function saveImport(page, file, numbering, expected, before, ambiguous = true) {
+async function saveImport(page, file, expected, before) {
   await openImport(page, file);
-  if (ambiguous) {
-    await parse(page);
-    await error(page).filter({ hasText: '对应不同位点' }).waitFor();
-    assert.deepEqual(await read(page), before);
-  }
-  if (numbering) await page.locator('#ogp-numbering-mode').selectOption(numbering);
   await parse(page);
   await page.locator('#ogp-confirmed').waitFor();
   assert.equal(await page.locator('.ogp-preview-item').count(), expected.length);
@@ -66,10 +61,10 @@ async function test() {
       assert.deepEqual(await read(page), empty);
       page.once('dialog', dialog => dialog.accept());
       await page.locator('.modal-head [data-act="close-modal"]').click();
-      const oldRows = [['C3', 'M', '607'], ['C28', 'N', '610'], ['C13', 'C14', '16']];
+      const oldRows = [['C3', 'C3', '10'], ['C28', 'C28', '31'], ['C13', 'C13', '553']];
       const newRows = [['M', 'M', '607'], ['N', 'N', '610'], ['C3', 'C3', '10'], ['C28', 'C28', '31']];
-      const old = await saveImport(page, path.join(fixtures, 'old.pdf'), 'legacy', oldRows, empty);
-      const revised = await saveImport(page, path.join(fixtures, 'new.pdf'), 'ld-v3', newRows, old);
+      const old = await saveImport(page, path.join(fixtures, 'old.pdf'), oldRows, empty);
+      const revised = await saveImport(page, path.join(fixtures, 'new.pdf'), newRows, old);
       assert.deepEqual(revised.ogpRows.slice(0, oldRows.length), old.ogpRows);
       assert.ok(!await page.locator('[data-act="ogp-numbering-preview"]').count());
       const evidence = await page.evaluate(async () => {
@@ -94,22 +89,20 @@ async function test() {
       await context.setOffline(true);
       assert.equal((await page.reload()).fromServiceWorker(), true);
       await nav(page);
-      const offline = await saveImport(page, path.join(fixtures, 'new.pdf'), 'ld-v3', newRows, revised);
+      const offline = await saveImport(page, path.join(fixtures, 'new.pdf'), newRows, revised);
       assert.deepEqual(offline.ogpImages, revised.ogpImages);
-      const c143 = path.join(fixtures, 'c143.pdf');
-      const correctedRows = [['C143', 'C142', '85']];
-      const legacyC143 = await saveImport(page, c143, 'legacy', correctedRows, offline, false);
-      const directC143 = await saveImport(page, c143, 'ld-v3', correctedRows, legacyC143, false);
-      const automatic = await saveImport(page, c143, '', correctedRows, directC143, false);
-      const sourceRow = automatic.ogpRows.at(-1);
+      const correctedRows = [['C142', 'C142', '85'], ['C143', 'C142', '85']];
+      const automatic = await saveImport(page, path.join(fixtures, 'c142-c143.pdf'), correctedRows, offline);
+      const w85Items = page.locator('.ogp-item').filter({hasText: /\bW85\b/});
+      assert.equal(await w85Items.locator('.ogp-duplicate').count(), 2);
       const report = automatic.ogpImports.at(-1);
       const portable = { app: 'HGCAL OGP Import', schemaVersion: 1, source: report.source, pages: report.pages,
-        detections: [{ moduleId: sourceRow.moduleId, cell: sourceRow.reportedCell, confidence: sourceRow.confidence,
-          page: sourceRow.sourcePage, index: sourceRow.sourceIndex, caption: sourceRow.caption,
-          image: automatic.ogpImages.find(image => image.id === sourceRow.imageId) }] };
-      const json = { name: 'c143.ogp.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(portable)) };
-      const jsonLegacy = await saveImport(page, json, 'legacy', correctedRows, automatic, false);
-      await saveImport(page, json, 'ld-v3', correctedRows, jsonLegacy, false);
+        detections: automatic.ogpRows.filter(row => row.importId === report.id).map(row => ({
+          moduleId: row.moduleId, cell: row.reportedCell, confidence: row.confidence, page: row.sourcePage,
+          index: row.sourceIndex, caption: row.caption, image: automatic.ogpImages.find(image => image.id === row.imageId)
+        })) };
+      const json = { name: 'c142-c143.ogp.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(portable)) };
+      await saveImport(page, json, correctedRows, automatic);
       // Seed mixed historical records with identical labels and varied provenance/status.
       await page.evaluate(async () => {
         const { loadState, saveState } = await import('./storage.js');
@@ -121,7 +114,7 @@ async function test() {
           pages: [{ page: 1, moduleId, count: 7 }], detections: Array.from({ length: 7 }, (_, index) => ({
             moduleId, cell: 'C143', confidence: 0.64, page: 1, index: index + 1, caption: 'cell 143 conf 0.64', image: state.ogpImages[0]
           })) };
-        const draft = prepareOgpImport(manifest, 'QA', undefined, 'ld-v3');
+        const draft = prepareOgpImport(manifest, 'QA');
         const nov20 = {...draft.rows[0].mapping, numberingVersion: '2026-11-20-c143'};
         const nov25 = {...nov20, target: 'C143', wires: ['337','338','339'], numberingVersion: '2026-11-25-c143-revert'};
         const asImported = (row, mapping) => {
@@ -175,7 +168,7 @@ async function test() {
       assert.deepEqual(afterMigration.history.slice(0, -1), beforeMigration.history);
       assert.deepEqual(afterMigration.history.map(event => event.wire), ['337', '85', '337', '85']);
       assert.deepEqual(errors, []);
-      console.log('PASS: old numeric and split LD V3 labels, numbering collisions, original marked image, read-only failures and offline import at 390×844');
+      console.log('PASS: direct numeric and letter labels, C142/C143 duplicate W85 in PDF and JSON, marked image, preview and offline import at 390×844');
     } finally {
       await browser.close();
     }

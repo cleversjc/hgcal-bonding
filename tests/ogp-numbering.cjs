@@ -5,13 +5,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const expected = require('./fixtures/ogp-numbering-2026-11-18.expected.json');
-const current = require('./fixtures/ogp-report-mappings.cjs').legacy;
+const current = require('./fixtures/ogp-report-mappings.cjs');
 const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/'] = process.argv.slice(2);
 const out = process.env.BONDING_TEST_OUTPUT || '.dev-evidence/ogp-numbering';
 fs.mkdirSync(out, { recursive: true });
 
 async function test() {
   const manifest = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  const { BUILTIN_MAPPING } = await import('../domain-data.js');
+  const firstWires = new Map(BUILTIN_MAPPING.filter(entry => entry.side === 'front').map(entry => [entry.target, entry.wires[0]]));
   const legacyManifest = { ...manifest, source: { ...manifest.source, pageCount: 1 },
     pages: manifest.pages.slice(0, 1), detections: manifest.detections.filter(d => d.page === 1) };
   assert.deepEqual(legacyManifest.detections.map(d => d.cell), Object.keys(expected));
@@ -96,11 +98,13 @@ async function test() {
     for (const file of [pdfPath, jsonPath]) {
       await page.locator('[data-act="ogp-import"]').first().click();
       await page.locator('#ogp-file').setInputFiles(file);
-      await page.locator('#ogp-operator').fill('Numbering QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');
+      await page.locator('#ogp-operator').fill('Numbering QA');
+      assert.equal(await page.locator('#ogp-import-form select').count(), 0);
       await page.locator('[form="ogp-import-form"]').click();
       await page.locator('#ogp-confirmed').waitFor();
       assert.equal(await page.locator('.ogp-preview-item').count(), 22);
-      assert.match(await page.locator('.ogp-preview-item').filter({ hasText: 'OGP C3 → M' }).innerText(), /W607/);
+      const c3Preview = page.locator('.ogp-preview-item').filter({ hasText: 'C3 · YOLO confidence' });
+      assert.match(await c3Preview.locator('b').innerText(), /· W10$/);
       await page.locator('#ogp-confirmed').check();
       await page.locator('[data-act="ogp-confirm"]').click();
       await closed();
@@ -108,7 +112,7 @@ async function test() {
       const rows = state.ogpRows.slice(-22);
       for (const [index, row] of rows.entries()) {
         const detection = manifest.detections[index];
-        const mapping = current[detection.cell] ?? Object.values(expected).find(([target]) => target === detection.cell);
+        const mapping = current[detection.cell] ?? [detection.cell, firstWires.get(detection.cell)];
         assert.equal(row.reportedCell, detection.cell);
         assert.deepEqual([row.mapping.target, row.originalWire], mapping);
         assert.equal(row.wire, row.originalWire);
@@ -126,7 +130,8 @@ async function test() {
     const csv = fs.readFileSync(csvPath, 'utf8');
     assert.match(csv, /"mapped_target","ogp_numbering_version"/);
     assert.ok(csv.includes(',"M","2026-11-27-c143-w85"'));
-    assert.match(csv, /"C143","85","85",[^\r\n]+,"C142","2026-11-27-c143-w85"/);
+    assert.match(csv, /"C142","85","85",[^\r\n]+,"C142","2026-11-18-ld-v3-labels"/);
+    assert.match(csv, /"C143","85","85",[^\r\n]+,"C142","2026-11-27-ld-v3-labels"/);
     assert.equal(await page.evaluate(async () => {
       const storage = await import('./storage.js');
       const { createArchive, readArchive } = await import('./archive.js');

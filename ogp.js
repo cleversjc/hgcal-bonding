@@ -16,7 +16,7 @@ const HISTORICAL_C143_TARGETS = new Map([
   [PREVIOUS_LD_V3_VERSION, 'C143']
 ]);
 
-// OGP report labels are distinct from the LD V3 database location IDs.
+// Earlier imports may have saved these aliases. Keep them for historical records and backups.
 const OGP_TO_DATABASE = Object.freeze({
   C3: 'M',
   C13: 'C14',
@@ -140,18 +140,12 @@ export function validateManifest(manifest, options) {
   return manifest;
 }
 
-export function prepareOgpImport(manifest, operator, now = new Date().toISOString(), numbering = 'legacy') {
+export function prepareOgpImport(manifest, operator, now = new Date().toISOString()) {
   validateManifest(manifest, { allowImageBlobs: true });
   if (!text(operator, 60)) fail('请填写导入人。');
-  if (numbering !== 'legacy' && numbering !== 'ld-v3') {
-    const ambiguous = [...new Set(manifest.detections.map(row => row.cell).filter(label =>
-      reportTarget(label, OGP_NUMBERING_VERSION) !== reportTarget(label, LD_V3_NUMBERING_VERSION)))];
-    if (ambiguous.length) fail('报告编号 ' + ambiguous.join('、') + ' 在旧编号和 LD V3 新编号中对应不同位点。请按原报告选择编号版本后预览。');
-  }
   const importId = uid(), images = [], rows = [];
-  const version = numbering === 'ld-v3' ? LD_V3_NUMBERING_VERSION : OGP_NUMBERING_VERSION;
   for (const detection of manifest.detections) {
-    const mapping = mappedOgpLocation(detection.cell, version);
+    const mapping = mappedOgpLocation(detection.cell, LD_V3_NUMBERING_VERSION);
     const originalWire = mapping.wires[0], imageId = uid();
     images.push({ ...detection.image, id: imageId });
     rows.push({

@@ -23,7 +23,7 @@ let browser;
   const complete=async(id,target=page)=>{await target.locator('[data-act="ogp-complete"][data-id="'+id+'"]').click();await card(id,target).waitFor({state:'hidden'});assert.equal(await target.locator('.modal').count(),0);};
   await page.goto(url);await page.locator('.shell').waitFor();await nav('ogp');
   assert.equal(await page.locator('#ogp-status').inputValue(),'unfinished');
-  await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(fixture);await page.locator('#ogp-operator').fill('Completion QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');await page.locator('[form="ogp-import-form"]').click();await page.locator('#ogp-confirmed').check();await page.locator('[data-act="ogp-confirm"]').click();await page.locator('.modal').waitFor({state:'hidden'});
+  await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(fixture);await page.locator('#ogp-operator').fill('Completion QA');await page.locator('[form="ogp-import-form"]').click();await page.locator('#ogp-confirmed').check();await page.locator('[data-act="ogp-confirm"]').click();await page.locator('.modal').waitFor({state:'hidden'});
   let state=await read();const first=state.ogpRows[0],second=state.ogpRows[1],duplicate=state.ogpRows[2];
   assert.equal(state.ogpRows.length,3);assert.equal(state.ogpImages.length,2);
   await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-check-status').selectOption('anomaly');await page.locator('#ogp-note').fill('保留已有备注，不要求补写文档');await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('.modal').waitFor({state:'hidden'});

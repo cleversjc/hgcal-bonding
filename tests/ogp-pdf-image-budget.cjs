@@ -37,7 +37,6 @@ async function test() {
         await page.locator('[data-act="ogp-import"]').first().click();
         await page.locator('#ogp-file').setInputFiles(file);
         await page.locator('#ogp-operator').fill('Image budget QA');
-        await page.locator('#ogp-numbering-mode').selectOption('legacy');
         await page.locator('[form="ogp-import-form"]').click();
       }
       async function preview() {
@@ -67,7 +66,7 @@ async function test() {
       assert.ok(imageBytes > 60 * MiB && imageBytes <= 96 * MiB, `${imageBytes} PNG bytes`);
       assert.equal(saved.ogpImages.length, 30);
       assert.deepEqual(saved.ogpRows.slice(0, 3).map(row => [row.reportedCell, row.mapping.target, row.wire]), [
-        ['M', 'M', '607'], ['N', 'N', '610'], ['C3', 'M', '607']
+        ['M', 'M', '607'], ['N', 'N', '610'], ['C3', 'C3', '10']
       ]);
       await page.reload();
       assert.deepEqual(await read(page), saved);

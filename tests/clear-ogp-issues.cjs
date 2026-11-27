@@ -23,7 +23,7 @@ async function seed(page, db) {
     const shared = image('red'), exclusive = image('blue');
     const manifest = {app:'HGCAL OGP Import',schemaVersion:1,source:{name:'QA.pdf',sha256:'a'.repeat(64),pageCount:1,parser:'test'},
       pages:[{page:1,moduleId,count:2}],detections:[shared, exclusive].map((photo,index)=>({moduleId,cell:'M',confidence:0.6,page:1,index:index+1,caption:'cell M conf 0.6',image:photo}))};
-    const state = appendOgpImport(emptyState(),prepareOgpImport(manifest,'QA',now,'legacy'));
+    const state = appendOgpImport(emptyState(),prepareOgpImport(manifest,'QA',now));
     state.records = [{id:'qa-problem',moduleId,moduleType:'LD V3',program:'',status:'open',side:'front',target:'C19',wires:['403'],type:'漏胶',operator:'QA',phase:'检查',endpoint:'Heel',note:'QA only',expected:null,actual:null,force:null,
       pullTests:[{wire:'403',force:5,endpoint:'Heel'}],createdAt:now,updatedAt:now,photos:[image('green')],history:[{at:now,status:'open',operator:'QA',note:'QA only'}],
       mapping:{status:'documented',version:'QA',source:'QA',target:'C19',wires:['403'],expectedWires:['403'],sources:[]}}];

@@ -11,7 +11,7 @@ const { chromium } = require('playwright');
 const [pdfPath, portablePath, origin='http://127.0.0.1:8765/'] = process.argv.slice(2);
 if(!pdfPath||!portablePath)throw new Error('Pass the fixture PDF and independently preprocessed JSON');
 const expected = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/glue_leakage_1104.expected.json'),'utf8'));
-const expectedNumbering = require('./fixtures/ogp-report-mappings.cjs').legacy;
+const expectedNumbering = require('./fixtures/ogp-report-mappings.cjs');
 const portable = JSON.parse(fs.readFileSync(portablePath,'utf8'));
 const out = path.resolve(process.env.BONDING_TEST_OUTPUT || '.dev-evidence');
 fs.mkdirSync(out,{recursive:true});
@@ -20,6 +20,8 @@ function pass(name,detail){checks.push({name,detail});console.log('PASS:',name,d
 let browser;
 
 (async()=>{
+  const { BUILTIN_MAPPING } = await import('../domain-data.js');
+  const firstWires = new Map(BUILTIN_MAPPING.filter(entry => entry.side === 'front').map(entry => [entry.target, entry.wires[0]]));
   assert.equal(crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).digest('hex'),expected.source.sha256);
   assert.equal(portable.detections.length,121);
   for(const [i,d] of portable.detections.entries())assert.equal(crypto.createHash('sha256').update(Buffer.from(d.image.data.split(',')[1],'base64')).digest('hex'),expected.detections[i].imageSha256);
@@ -62,7 +64,7 @@ let browser;
   pass('Overall photo, void audit and backside six-position workflow');
   const legacy=await page.evaluate(async()=>{const m=await import('./storage.js'),s=await m.loadState();delete s.ogpRows;delete s.ogpImages;delete s.ogpImports;delete s.overallRecords;for(const r of s.records){delete r.pullTests;r.force=5.2;}return m.makeBackup(s);});
   const legacyPath=path.join(out,'legacy-backup.json');fs.writeFileSync(legacyPath,JSON.stringify(legacy));
-  await nav('ogp');await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(pdfPath);await page.locator('#ogp-operator').fill('OGP QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');
+  await nav('ogp');await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(pdfPath);await page.locator('#ogp-operator').fill('OGP QA');
   await page.locator('[form="ogp-import-form"]').click();await page.locator('#ogp-confirmed').waitFor({timeout:60000});
   s=await read();assert.equal(s.rows.length,0);assert.equal(s.images.length,0);
   await page.locator('[data-act="ogp-confirm"]').click();await page.locator('#form-error').filter({hasText:'勾选确认'}).waitFor();assert.equal((await read()).rows.length,0);
@@ -71,19 +73,17 @@ let browser;
   await page.locator('[data-act="ogp-preview-return"]').click();await page.locator('#ogp-confirmed').check();await page.locator('[data-act="ogp-confirm"]').click();await closed();
   s=await read();assert.equal(s.rows.length,121);assert.equal(s.images.length,121);assert.equal(s.records.length,2);assert.equal(s.overall.length,1);
   assert.deepEqual(s.imports[0].pages,expected.pages);assert.equal(s.imports[0].source.sha256,expected.source.sha256);
-  const counts={};let correctedCount=0;
+  const counts={};
   for(const [i,row]of s.rows.entries()){
     const target=expected.detections[i];counts[row.moduleId]=(counts[row.moduleId]||0)+1;
     assert.deepEqual([row.moduleId,row.reportedCell,row.confidence,row.sourcePage,row.sourceIndex],[target.moduleId,target.cell,target.confidence,target.page,target.index]);
     assert.equal(typeof row.wire,'string');assert.equal(row.wire,row.mapping.wires[0]);assert.equal(row.originalWire,row.wire);assert.equal(row.status,'pending');
-    const correction=expectedNumbering[target.cell];
-    if(correction){assert.deepEqual([row.mapping.target,row.wire],correction);correctedCount++;}
-    else assert.equal(row.mapping.target,target.cell);
+    assert.deepEqual([row.mapping.target,row.wire],expectedNumbering[target.cell] ?? [target.cell,firstWires.get(target.cell)]);
   }
   assert.deepEqual(counts,expected.moduleCounts);
   pass('All six PDF pages, four module IDs, 121 labels/confidences and exactly one first Wire',counts);
-  assert.equal(correctedCount,13);
-  pass('Corrected all 13 affected detections in the historical PDF');
+  assert.deepEqual(s.rows.filter(row=>row.reportedCell==='C142').map(row=>row.wire), ['85','85','85']);
+  pass('Historical numeric PDF imported with direct LD V3 labels');
   const pixelResult=await page.evaluate(async originals=>{
     const state=await(await import('./storage.js')).loadState();const report=[];
     const image=src=>new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=src;});
@@ -107,7 +107,7 @@ let browser;
   pass('All 121 native crops match independent originals and preserve red annotations',pixelResult);
   await page.screenshot({path:path.join(out,'mobile-ogp.png')});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  const first=s.rows[0],testWire=expectedNumbering.C61[1];await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill(testWire);await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
+  const first=s.rows[0],testWire=firstWires.get('C61');await page.locator('[data-act="ogp-edit"][data-id="'+first.id+'"]').click();await page.locator('#ogp-wire').fill(testWire);await page.locator('[form="ogp-edit-form"][value="save"]').click();await page.locator('#form-error').filter({hasText:'修正原因'}).waitFor();
   await page.locator('#ogp-reason').fill('现场 Cell 位置核对');await page.locator('#ogp-edit-operator').fill('Correction QA');await page.locator('#ogp-check-status').selectOption('normal');await page.locator('#ogp-note').fill('看图确认正常，含逗号与"引号"\n第二行备注');
   await page.locator('[form="ogp-edit-form"][value="save"]').click();await closed();
   s=await read();const corrected=s.rows.find(r=>r.id===first.id);assert.equal(corrected.wire,testWire);assert.equal(corrected.originalWire,'211');assert.equal(corrected.history.length,2);assert.equal(corrected.history[1].operator,'Correction QA');assert.equal(corrected.status,'normal');
@@ -121,7 +121,7 @@ let browser;
   await page.waitForFunction(()=>[...document.querySelectorAll('[data-mobile-status]')].some(e=>e.textContent==='离线已就绪'),null,{timeout:60000});
   await context.setOffline(true);await page.reload();await page.locator('.shell').waitFor();await nav('ogp');assert.match(await page.locator('.ogp-count').innerText(),/121 条检测/);
   await page.locator('.ogp-thumbnail').first().click();await page.locator('#ogp-zoom-image').waitFor();assert.ok(await page.locator('#ogp-zoom-image').evaluate(e=>e.complete&&e.naturalWidth===640));await page.locator('.modal [data-act="ogp-edit"]').click();await page.locator('.modal [data-act="close-modal"]').first().click();
-  await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(pdfPath);await page.locator('#ogp-operator').fill('Offline QA'); await page.locator('#ogp-numbering-mode').selectOption('legacy');await page.locator('[form="ogp-import-form"]').click();await page.locator('#ogp-confirmed').waitFor({timeout:60000});
+  await page.locator('[data-act="ogp-import"]').first().click();await page.locator('#ogp-file').setInputFiles(pdfPath);await page.locator('#ogp-operator').fill('Offline QA');await page.locator('[form="ogp-import-form"]').click();await page.locator('#ogp-confirmed').waitFor({timeout:60000});
   await page.locator('.ogp-duplicate').filter({hasText:'这份 PDF 已导入过'}).waitFor();await page.locator('#ogp-confirmed').check();await page.locator('[data-act="ogp-confirm"]').click();await closed();
   s=await read();assert.equal(s.rows.length,242);assert.equal(s.imports.length,2);assert.equal(s.images.length,121);
   const shellVersion=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8').match(/SHELL_VERSION = '([^']+)'/)[1];
@@ -144,7 +144,7 @@ let browser;
   await restored.locator('[data-act="restore"]').click();await restored.locator('#backup-file').setInputFiles(legacyPath);await restored.waitForFunction(()=>!document.querySelector('#restore-confirm').disabled);await restored.locator('#restore-confirm').click();await closed(restored);assert.deepEqual(await read(restored),restoredState);
   pass('Full UI backup restore on empty device and legacy merge preserve all records / images');
   const portableContext=await browser.newContext(),portablePage=await portableContext.newPage();await portablePage.goto(origin);await portablePage.locator('.shell').waitFor();await portablePage.locator('.nav-items [data-view="mapping"]').click();await portablePage.locator('[data-act="restore"]').click();await portablePage.locator('#backup-file').setInputFiles(legacyPath);await portablePage.waitForFunction(()=>!document.querySelector('#restore-confirm').disabled);await portablePage.locator('#restore-confirm').click();await closed(portablePage);const legacyRestored=await read(portablePage);assert.equal(legacyRestored.records.length,2);assert.equal(legacyRestored.records[0].force,5.2);assert.equal(legacyRestored.records[0].pullTests,undefined);assert.equal(legacyRestored.overall.length,0);
-  await portablePage.locator('.nav-items [data-view="ogp"]').click();await portablePage.locator('[data-act="ogp-import"]').first().click();await portablePage.locator('#ogp-file').setInputFiles(portablePath);await portablePage.locator('#ogp-operator').fill('Preprocess QA'); await portablePage.locator('#ogp-numbering-mode').selectOption('legacy');await portablePage.locator('[form="ogp-import-form"]').click();await portablePage.locator('#ogp-confirmed').waitFor();assert.equal((await read(portablePage)).rows.length,0);await portablePage.locator('#ogp-confirmed').check();await portablePage.locator('[data-act="ogp-confirm"]').click();await closed(portablePage);const portableState=await read(portablePage);assert.equal(portableState.rows.length,121);assert.equal(portableState.images.length,121);assert.ok(portableState.images.reduce((n,i)=>n+i.bytes,0)<10*1024*1024);assert.equal(portableState.records[0].force,5.2);
+  await portablePage.locator('.nav-items [data-view="ogp"]').click();await portablePage.locator('[data-act="ogp-import"]').first().click();await portablePage.locator('#ogp-file').setInputFiles(portablePath);await portablePage.locator('#ogp-operator').fill('Preprocess QA');await portablePage.locator('[form="ogp-import-form"]').click();await portablePage.locator('#ogp-confirmed').waitFor();assert.equal((await read(portablePage)).rows.length,0);await portablePage.locator('#ogp-confirmed').check();await portablePage.locator('[data-act="ogp-confirm"]').click();await closed(portablePage);const portableState=await read(portablePage);assert.equal(portableState.rows.length,121);assert.equal(portableState.images.length,121);assert.ok(portableState.images.reduce((n,i)=>n+i.bytes,0)<10*1024*1024);assert.equal(portableState.records[0].force,5.2);
   pass('Reusable preprocessing JSON import preserves original JPEG bytes',{bytes:portableState.images.reduce((n,i)=>n+i.bytes,0)});
   assert.deepEqual(pageErrors,[]);
   fs.writeFileSync(path.join(out,'browser-tests.json'),JSON.stringify({passed:true,checks,pageErrors},null,2));

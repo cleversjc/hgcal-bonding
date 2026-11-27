@@ -8,7 +8,7 @@ const path = require('node:path');
   const { BUILTIN_MAPPING, BACKSIDE_ORDER } = await import('../domain-data.js');
   const { parseCaptionItems, pairCaptions } = await import('../ogp-pdf.js');
   const { prepareOgpImport: prepareLegacyImport } = await import('../previous-dev/ogp.js');
-  const expectedNumbering = require('./fixtures/ogp-report-mappings.cjs').legacy;
+  const expectedNumbering = require('./fixtures/ogp-report-mappings.cjs');
   const now = '2026-11-04T12:00:00.000Z';
   const image = {name:'evidence.png',width:1,height:1,data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII='};
   const signals = BUILTIN_MAPPING.filter(e=>e.side==='front'&&/^C\d+$/.test(e.target));
@@ -24,26 +24,18 @@ const path = require('node:path');
     assert.equal(row.wire,firstWire);
     assert.equal(typeof row.wire,'string');
     assert.equal(row.mapping.wires.length,3);
+    assert.equal(ogp.pendingOgpNumberingUpdate(row), null);
   }
   for (const [cell,wire] of Object.entries({C111:'211',C118:'322',C57:'367',C185:'505',C70:'97'})) assert.equal(draft.rows.find(r=>r.reportedCell===cell).wire,wire);
   const letterLocations = BUILTIN_MAPPING.filter(entry => entry.side === 'front' && /^[A-Z]$/.test(entry.target));
   assert.equal(letterLocations.length, 12);
   const letters = { ...manifest, pages: [{ ...manifest.pages[0], count: letterLocations.length }],
     detections: letterLocations.map(({target}, index) => ({ ...manifest.detections[index], cell: target, caption: 'cell '+target+' conf 0.52' })) };
-  for (const mode of ['legacy', 'ld-v3']) {
-    const letterRows = ogp.prepareOgpImport(letters, 'QA', now, mode).rows;
-    assert.deepEqual(letterRows.map(row => [row.mapping.target, row.wire]), letterLocations.map(entry => [entry.target, entry.wires[0]]));
-  }
-  assert.throws(() => ogp.prepareOgpImport(manifest, 'QA', now, ''), /不同位点/);
-  const directDraft = ogp.prepareOgpImport(manifest, 'QA', now, 'ld-v3');
-  for (const [index, row] of directDraft.rows.entries()) {
-    const expected = row.reportedCell === 'C143' ? ['C142', '85'] : [signals[index].target, signals[index].wires[0]];
-    assert.deepEqual([row.mapping.target, row.wire], expected);
-    assert.equal(ogp.pendingOgpNumberingUpdate(row), null);
-  }
+  const letterRows = ogp.prepareOgpImport(letters, 'QA', now).rows;
+  assert.deepEqual(letterRows.map(row => [row.mapping.target, row.wire]), letterLocations.map(entry => [entry.target, entry.wires[0]]));
   assert.deepEqual(signals.filter(entry => ['C142','C143'].includes(entry.target)).map(entry => entry.wires[0]), ['85','337']);
-  assert.equal(directDraft.rows.find(row => row.reportedCell === 'C142').mapping.numberingVersion, '2026-11-18-ld-v3-labels');
-  const directState = ogp.appendOgpImport(storage.emptyState(), directDraft);
+  assert.equal(draft.rows.find(row => row.reportedCell === 'C142').mapping.numberingVersion, '2026-11-18-ld-v3-labels');
+  const directState = ogp.appendOgpImport(storage.emptyState(), draft);
   assert.deepEqual(storage.readBackup(JSON.stringify(storage.makeBackup(directState))).ogpRows, directState.ogpRows);
   const directC143 = directState.ogpRows.find(row => row.reportedCell === 'C143');
   const stateWith = changed => ({ ...directState, ogpRows: directState.ogpRows.map(row => row.id === changed.id ? changed : row) });
@@ -138,8 +130,7 @@ const path = require('node:path');
   const duplicateManifest=structuredClone(manifest); duplicateManifest.detections.push({...duplicateManifest.detections[0],index:199}); duplicateManifest.pages[0].count++;
   const repeatedCell=ogp.prepareOgpImport(duplicateManifest,'QA',now);
   assert.equal(repeatedCell.rows.length,199);
-  const numericAliases=Object.entries(expectedNumbering).filter(([, [target]])=>target.startsWith('C')&&!expectedNumbering[target]);
-  const expectedDuplicates=new Set([manifest.detections[0].cell,...numericAliases.flatMap(([cell,[target]])=>[cell,target])]);
+  const expectedDuplicates=new Set([manifest.detections[0].cell, 'C142', 'C143']);
   assert.deepEqual(ogp.duplicateOgpWires(repeatedCell.rows),new Set(repeatedCell.rows.filter(row=>expectedDuplicates.has(row.reportedCell)).map(row=>row.id)));
   const legacyRow=prepareLegacyImport(manifest,'QA',now).rows.find(row=>row.reportedCell==='C3');
   const updated=ogp.applyOgpNumberingUpdate(legacyRow,'QA','2026-11-18T12:01:00.000Z');
@@ -164,5 +155,5 @@ const path = require('node:path');
   const sw=fs.readFileSync(path.join(__dirname,'../sw.js'),'utf8'),mobile=fs.readFileSync(path.join(__dirname,'../mobile-app.js'),'utf8');
   assert.equal(sw.match(/SHELL_VERSION = '([^']+)'/)[1],mobile.match(/SHELL_VERSION = '([^']+)'/)[1]);
   assert.ok(sw.includes('pdf.worker.min.mjs')); assert.ok(sw.includes('ogp-pdf.js')); assert.ok(!/\.skipWaiting\(/.test(sw));
-  console.log('PASS: 198 signal and 12 letter labels in both modes, C143 W85, historical mappings, duplicate flags, audit, backups, CSV and backside order');
+  console.log('PASS: 198 signal and 12 letter labels with direct LD V3 import, C142/C143 W85, historical mappings, duplicate flags, audit, backups, CSV and backside order');
 })().catch(error=>{console.error(error);process.exitCode=1;});

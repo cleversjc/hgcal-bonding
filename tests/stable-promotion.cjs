@@ -11,11 +11,10 @@ const root = path.resolve(__dirname, '..');
 const old = path.resolve(process.argv[2]);
 const isDev = process.argv[3] === 'dev';
 const entry = isDev ? '' : 'stable-v1/';
-const priorVersion = isDev ? '2026-11-25-ogp-c143-revert-v1' : 'stable-1.2.0';
-const currentVersion = isDev ? '2026-11-27-ogp-c143-w85-v1' : 'stable-1.2.1';
-const priorLabel = isDev ? /C143 对照回退/ : /1\.2\.0/;
+const priorVersion = isDev ? '2026-11-27-ogp-c143-w85-v1' : 'stable-1.2.0';
+const currentVersion = isDev ? '2026-11-27-ogp-ld-v3-only-v1' : 'stable-1.2.1';
+const priorLabel = isDev ? /C143 定位 W85/ : /1\.2\.0/;
 const priorWire = isDev ? '337' : '85';
-const expectedC143 = isDev ? ['C142', '85'] : ['C143', '337'];
 const cachePrefix = isDev ? 'hgcal-bonding-shell-' : 'hgcal-bonding-stable-v1-shell-';
 const fieldKey = isDev ? 'hgcal-bonding-field-session-v1' : 'hgcal-bonding-stable-field-session-v1';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -38,7 +37,7 @@ async function test() {
   const fixtures = mkdtempSync(path.join(tmpdir(), 'stable-promotion-'));
   try {
     execFileSync(process.env.PYTHON || 'python', [path.join(__dirname, 'fixtures', 'make-ogp-pdf-grid.py'), fixtures]);
-    const pdf = path.join(fixtures, 'c143.pdf');
+    const pdf = path.join(fixtures, isDev ? 'c142-c143.pdf' : 'c143.pdf');
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const site = `http://127.0.0.1:${server.address().port}`;
     const url = site + '/hgcal-bonding/' + entry;
@@ -78,7 +77,7 @@ async function test() {
       await save(oldPage);
       const initial = await read(oldPage);
       assert.equal(initial.ogpRows[0].wire, priorWire);
-      assert.equal(initial.ogpImages.length, 1);
+      assert.equal(initial.ogpImages.length, isDev ? 2 : 1);
       await oldPage.locator('#ogp-status').selectOption('all');
       const preference = await oldPage.evaluate(key => localStorage.getItem(key), fieldKey);
       assert.ok(preference);
@@ -98,7 +97,7 @@ async function test() {
       }
       const page = await activate(oldPage, root, priorVersion);
       await nav(page, 'mapping');
-      assert.match(await page.locator('.release-label').innerText(), isDev ? /C143 定位 W85/ : /1\.2\.1/);
+      assert.match(await page.locator('.release-label').innerText(), isDev ? /按 LD V3 直接解析/ : /1\.2\.1/);
       await nav(page, 'ogp');
       assert.deepEqual(await read(page), initial);
       assert.equal(await page.locator('#ogp-status').inputValue(), 'all');
@@ -106,25 +105,32 @@ async function test() {
       await nav(devPage, 'mapping');
       await ready(devPage);
       assert.equal((await read(devPage)).ogpRows.length, 0);
-      for (const mode of ['legacy', 'ld-v3']) {
+      for (const mode of (isDev ? [null] : ['legacy', 'ld-v3'])) {
         const before = await read(page);
         await startImport(page);
-        await page.locator('#ogp-numbering-mode').selectOption(mode);
+        if (mode) await page.locator('#ogp-numbering-mode').selectOption(mode);
+        else assert.equal(await page.locator('#ogp-import-form select').count(), 0);
         await parse(page);
         await page.locator('#ogp-confirmed').waitFor();
         assert.deepEqual(await read(page), before);
         await save(page);
-        const row = (await read(page)).ogpRows.at(-1);
-        assert.deepEqual([row.mapping.target, row.wire], expectedC143);
+        const newRows = (await read(page)).ogpRows.slice(before.ogpRows.length);
+        assert.deepEqual(newRows.map(row => [row.reportedCell, row.mapping.target, row.wire]), isDev
+          ? [['C142', 'C142', '85'], ['C143', 'C142', '85']] : [['C143', 'C143', '337']]);
       }
-      await action(page, 'ogp-numbering-preview').click();
-      const choice = page.locator(isDev ? '[data-ogp-c143-id]' : '[data-ogp-c143-rollback-id]');
-      assert.equal(await choice.count(), 1);
-      await choice.check();
-      await action(page, 'ogp-numbering-confirm').click();
-      await page.locator('.modal').waitFor({ state: 'hidden' });
+      if (isDev) {
+        assert.equal(await action(page, 'ogp-numbering-preview').count(), 0);
+        assert.deepEqual((await read(page)).ogpRows.slice(0, initial.ogpRows.length), initial.ogpRows);
+      } else {
+        await action(page, 'ogp-numbering-preview').click();
+        const choice = page.locator('[data-ogp-c143-rollback-id]');
+        assert.equal(await choice.count(), 1);
+        await choice.check();
+        await action(page, 'ogp-numbering-confirm').click();
+        await page.locator('.modal').waitFor({ state: 'hidden' });
+      }
       const saved = await read(page);
-      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], [expectedC143[1], priorWire]);
+      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], ['337', priorWire]);
       assert.equal(saved.ogpImages[0].data, initial.ogpImages[0].data);
       // Saving an import opens the unfinished view; explicitly set the preference
       // that the cache rebuild and offline reopening should preserve.
@@ -147,7 +153,7 @@ async function test() {
       await nav(rolledBack, 'mapping');
       assert.match(await rolledBack.locator('.release-label').innerText(), priorLabel);
       assert.deepEqual(await read(rolledBack), saved);
-      console.log('PASS: ' + (isDev ? 'development' : 'stable') + ' installed upgrade keeps records, original image, and preferences; C143 modes, confirmed migration, scoped cache rebuild, and offline reopen');
+      console.log('PASS: ' + (isDev ? 'development' : 'stable') + ' installed upgrade, release-specific import, saved records, original images, scoped cache rebuild, offline reopen and rollback');
     } finally { await browser.close(); }
   } finally { rmSync(fixtures, { recursive: true, force: true }); }
 }

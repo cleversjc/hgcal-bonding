@@ -1,15 +1,15 @@
-// NODE_PATH=<playwright> node tests/ogp-pdf-compat.cjs report.pdf report.ogp.json [url] [legacy|ld-v3]
+// NODE_PATH=<playwright> node tests/ogp-pdf-compat.cjs report.pdf report.ogp.json [url] [stable numbering mode]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { chromium } = require('playwright');
-const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/', mode = 'legacy'] = process.argv.slice(2);
+const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/', stableMode = 'legacy'] = process.argv.slice(2);
+const stable = new URL(url).pathname.includes('/stable-v1/');
+const mode = stable ? stableMode : 'ld-v3';
 assert.ok(['legacy', 'ld-v3'].includes(mode));
-const rules = new URL(url).pathname.includes('/stable-v1/')
-  ? { legacy: require('./fixtures/ogp-numbering-2026-11-18.expected.json'), 'ld-v3': {} }
-  : require('./fixtures/ogp-report-mappings.cjs');
-const renumbered = rules[mode];
+const stableRules = { legacy: require('./fixtures/ogp-numbering-2026-11-18.expected.json'), 'ld-v3': {} };
+const renumbered = stable ? stableRules[mode] : require('./fixtures/ogp-report-mappings.cjs');
 const expected = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 const sha256 = crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).digest('hex');
 assert.equal(sha256, expected.source.sha256);
@@ -34,7 +34,8 @@ async function importPdf(page, beforeCount = 0) {
   await page.locator('[data-act="ogp-import"]').first().click();
   await page.locator('#ogp-file').setInputFiles(pdfPath);
   await page.locator('#ogp-operator').fill('Compatibility QA');
-  await page.locator('#ogp-numbering-mode').selectOption(mode);
+  if (stable) await page.locator('#ogp-numbering-mode').selectOption(mode);
+  else assert.equal(await page.locator('#ogp-import-form select').count(), 0);
   await page.locator('[form="ogp-import-form"]').click();
   await page.waitForFunction(() => document.querySelector('#ogp-confirmed') || document.querySelector('#form-error')?.textContent.trim(), null, { timeout: 45000 });
   assert.equal(await page.locator('#form-error').innerText(), '');
@@ -58,6 +59,7 @@ async function importPdf(page, beforeCount = 0) {
     assert.equal(row.wire, row.mapping.wires[0]);
     if (renumbered[source.cell]) assert.deepEqual([row.mapping.target, row.wire], renumbered[source.cell]);
     else assert.equal(row.mapping.target, source.cell);
+    if (!stable && source.cell === 'C142') assert.equal(row.wire, '85');
     const image = state.images.find(picture => picture.id === row.imageId);
     assert.deepEqual([image.width, image.height, image.mime], [source.image.width, source.image.height, 'image/png']);
     assert.match(image.sha256, /^[a-f0-9]{64}$/);
@@ -85,6 +87,7 @@ async function test() {
     const normalPage = await newPage(normal);
     const baseline = await importPdf(normalPage);
     const c143 = baseline.filter(row => row[1] === 'C143');
+    const c142 = baseline.filter(row => row[1] === 'C142');
     console.log('PASS: ' + mode + ' PDF import, ' + expected.pages.length + ' pages, ' + rowCount + ' detections, C143 target/Wire:', c143.map(row => row.slice(5, 7)));
 
     await normalPage.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated', null, { polling: 150, timeout: 45000 });
@@ -121,6 +124,7 @@ async function test() {
     fs.writeFileSync(path.join(out, 'pdf-compat-tests.json'), JSON.stringify({
       passed: true, url, mode, sourceSha256: sha256, pages: expected.pages, detections: baseline.length,
       c143: c143.map(([moduleId, label, page, index, , target, wire]) => ({moduleId, label, page, index, target, wire})),
+      c142: c142.map(([moduleId, label, page, index, , target, wire]) => ({moduleId, label, page, index, target, wire})),
       normalImport: true, offlineImport: true, missingStreamIteratorAndToHexImport: true,
       previewBeforeWrite: true, sameLabelsWireAndImageHashes: true, pageErrors: errors
     }, null, 2) + '\n');
