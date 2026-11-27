@@ -1,15 +1,14 @@
-// NODE_PATH=<playwright> node tests/ogp-pdf-compat.cjs report.pdf report.ogp.json [url] [stable numbering mode]
+// NODE_PATH=<playwright> node tests/ogp-pdf-compat.cjs report.pdf report.ogp.json [url] [archived stable numbering mode]
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { chromium } = require('playwright');
-const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/', stableMode = 'legacy'] = process.argv.slice(2);
-const stable = new URL(url).pathname.includes('/stable-v1/');
-const mode = stable ? stableMode : 'ld-v3';
+const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/', archivedMode] = process.argv.slice(2);
+const mode = archivedMode ?? 'ld-v3';
 assert.ok(['legacy', 'ld-v3'].includes(mode));
 const stableRules = { legacy: require('./fixtures/ogp-numbering-2026-11-18.expected.json'), 'ld-v3': {} };
-const renumbered = stable ? stableRules[mode] : require('./fixtures/ogp-report-mappings.cjs');
+const renumbered = archivedMode ? stableRules[mode] : require('./fixtures/ogp-report-mappings.cjs');
 const expected = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 const sha256 = crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).digest('hex');
 assert.equal(sha256, expected.source.sha256);
@@ -34,7 +33,7 @@ async function importPdf(page, beforeCount = 0) {
   await page.locator('[data-act="ogp-import"]').first().click();
   await page.locator('#ogp-file').setInputFiles(pdfPath);
   await page.locator('#ogp-operator').fill('Compatibility QA');
-  if (stable) await page.locator('#ogp-numbering-mode').selectOption(mode);
+  if (archivedMode) await page.locator('#ogp-numbering-mode').selectOption(mode);
   else assert.equal(await page.locator('#ogp-import-form select').count(), 0);
   await page.locator('[form="ogp-import-form"]').click();
   await page.waitForFunction(() => document.querySelector('#ogp-confirmed') || document.querySelector('#form-error')?.textContent.trim(), null, { timeout: 45000 });

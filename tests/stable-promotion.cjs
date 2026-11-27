@@ -11,10 +11,9 @@ const root = path.resolve(__dirname, '..');
 const old = path.resolve(process.argv[2]);
 const isDev = process.argv[3] === 'dev';
 const entry = isDev ? '' : 'stable-v1/';
-const priorVersion = isDev ? '2026-11-27-ogp-ld-v3-only-v1' : 'stable-1.2.0';
-const currentVersion = isDev ? '2026-11-27-ld-v3-cell-wires-v1' : 'stable-1.2.1';
-const priorLabel = isDev ? /按 LD V3 直接解析/ : /1\.2\.0/;
-const priorWire = '85';
+const priorVersion = isDev ? '2026-11-27-ogp-ld-v3-only-v1' : 'stable-1.2.1';
+const currentVersion = isDev ? '2026-11-27-ld-v3-cell-wires-v1' : 'stable-1.3.0';
+const priorLabel = isDev ? /按 LD V3 直接解析/ : /1\.2\.1/;
 const cachePrefix = isDev ? 'hgcal-bonding-shell-' : 'hgcal-bonding-stable-v1-shell-';
 const fieldKey = isDev ? 'hgcal-bonding-field-session-v1' : 'hgcal-bonding-stable-field-session-v1';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -37,7 +36,7 @@ async function test() {
   const fixtures = mkdtempSync(path.join(tmpdir(), 'stable-promotion-'));
   try {
     execFileSync(process.env.PYTHON || 'python', [path.join(__dirname, 'fixtures', 'make-ogp-pdf-grid.py'), fixtures]);
-    const pdf = path.join(fixtures, isDev ? 'c142-c143.pdf' : 'c143.pdf');
+    const pdf = path.join(fixtures, 'c142-c143.pdf');
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const site = `http://127.0.0.1:${server.address().port}`;
     const url = site + '/hgcal-bonding/' + entry;
@@ -99,17 +98,27 @@ async function test() {
       assert.match(await oldPage.locator('.release-label').innerText(), priorLabel);
       await nav(oldPage, 'ogp');
       await ready(oldPage);
-      await startImport(oldPage);
-      if (!isDev) await oldPage.locator('#ogp-numbering-mode').selectOption('legacy');
-      await parse(oldPage);
-      await save(oldPage);
-      if (isDev) {
-        await recordGroup(oldPage, 'C142', ['85', '86', '87'], '337');
-        await nav(oldPage, 'ogp');
+      for (const mode of (isDev ? [null] : ['legacy', 'ld-v3'])) {
+        await startImport(oldPage);
+        if (mode) await oldPage.locator('#ogp-numbering-mode').selectOption(mode);
+        await parse(oldPage);
+        await save(oldPage);
       }
+      const imported = (await read(oldPage)).ogpRows;
+      assert.deepEqual(imported.map(row => [row.reportedCell, row.mapping.target, row.wire]), isDev
+        ? [['C142','C142','85'], ['C143','C142','85']]
+        : [['C142','C143','337'], ['C143','C143','337'], ['C142','C142','85'], ['C143','C143','337']]);
+      if (!isDev) {
+        await oldPage.locator('[data-act="ogp-edit"][data-id="' + imported.at(-1).id + '"]').click();
+        await oldPage.locator('#ogp-wire').fill('86');
+        await oldPage.locator('#ogp-reason').fill('机台人工定位');
+        await oldPage.locator('[form="ogp-edit-form"][value="save"]').click();
+        await oldPage.locator('.modal').waitFor({state: 'hidden'});
+      }
+      await recordGroup(oldPage, 'C142', ['85', '86', '87'], '337');
+      await nav(oldPage, 'ogp');
       const initial = await read(oldPage);
-      assert.equal(initial.ogpRows[0].wire, priorWire);
-      assert.equal(initial.ogpImages.length, isDev ? 2 : 1);
+      assert.equal(initial.ogpImages.length, 2);
       await oldPage.locator('#ogp-status').selectOption('all');
       const preference = await oldPage.evaluate(key => localStorage.getItem(key), fieldKey);
       assert.ok(preference);
@@ -129,7 +138,7 @@ async function test() {
       }
       const page = await activate(oldPage, root, priorVersion);
       await nav(page, 'mapping');
-      assert.match(await page.locator('.release-label').innerText(), isDev ? /C142、C143 线号修订/ : /1\.2\.1/);
+      assert.match(await page.locator('.release-label').innerText(), isDev ? /C142、C143 线号修订/ : /稳定版 1\.3\.0/);
       await nav(page, 'ogp');
       assert.deepEqual(await read(page), initial);
       assert.equal(await page.locator('#ogp-status').inputValue(), 'all');
@@ -137,46 +146,43 @@ async function test() {
       await nav(devPage, 'mapping');
       await ready(devPage);
       assert.equal((await read(devPage)).ogpRows.length, 0);
-      for (const mode of (isDev ? [null] : ['legacy', 'ld-v3'])) {
-        const before = await read(page);
-        await startImport(page);
-        if (mode) await page.locator('#ogp-numbering-mode').selectOption(mode);
-        else assert.equal(await page.locator('#ogp-import-form select').count(), 0);
-        await parse(page);
-        await page.locator('#ogp-confirmed').waitFor();
-        assert.deepEqual(await read(page), before);
-        await save(page);
-        const newRows = (await read(page)).ogpRows.slice(before.ogpRows.length);
-        assert.deepEqual(newRows.map(row => [row.reportedCell, row.mapping.target, row.wire]), isDev
-          ? [['C142', 'C142', '337'], ['C143', 'C143', '85']] : [['C143', 'C143', '337']]);
+      await startImport(page);
+      assert.equal(await page.locator('#ogp-import-form select').count(), 0);
+      await parse(page);
+      await page.locator('#ogp-confirmed').waitFor();
+      assert.deepEqual(await read(page), initial);
+      await save(page);
+      const afterImport = (await read(page)).ogpRows;
+      assert.deepEqual(afterImport.slice(0, initial.ogpRows.length), initial.ogpRows);
+      assert.deepEqual(afterImport.slice(initial.ogpRows.length).map(row => [row.reportedCell, row.mapping.target, row.wire]),
+        [['C142', 'C142', '337'], ['C143', 'C143', '85']]);
+
+      await action(page, 'ogp-numbering-preview').click();
+      const list = page.locator('.ogp-numbering-list');
+      const eligible = initial.ogpRows.filter(row => row.history.length === 1);
+      assert.equal(eligible.length, isDev ? 2 : 3);
+      assert.equal(await list.getByRole('checkbox').count(), eligible.length);
+      assert.equal(await list.locator(':checked').count(), 0);
+      const firstWire = { C142: '337', C143: '85' };
+      for (const row of eligible) {
+        const change = row.mapping.target + ' · W' + row.wire + ' → ' + row.reportedCell + ' · W' + firstWire[row.reportedCell];
+        await list.locator('li').filter({hasText: change}).locator('[data-ogp-location-id="' + row.id + '"]').check();
       }
-      if (isDev) {
-        assert.deepEqual((await read(page)).ogpRows.slice(0, initial.ogpRows.length), initial.ogpRows);
-        await action(page, 'ogp-numbering-preview').click();
-        const list = page.locator('.ogp-numbering-list');
-        assert.equal(await list.locator('[data-ogp-location-id]:checked').count(), 0);
-        for (const change of ['C142 · W85 → C142 · W337', 'C142 · W85 → C143 · W85']) {
-          await list.locator('li').filter({hasText: change}).getByRole('checkbox').check();
-        }
-        await action(page, 'ogp-numbering-confirm').click();
-        await page.locator('.modal').waitFor({state: 'hidden'});
-        assert.deepEqual((await read(page)).ogpRows.slice(0, 2).map(row => [row.numberingUpdate.target, row.wire, row.originalWire]),
-          [['C142', '337', '85'], ['C143', '85', '85']]);
-        await recordGroup(page, 'C143', ['85', '86', '87'], '337');
-        await recordGroup(page, 'C142', ['337', '338', '339'], '85');
-        assert.deepEqual((await read(page)).records[0], initial.records[0]);
-        await nav(page, 'ogp');
-      } else {
-        await action(page, 'ogp-numbering-preview').click();
-        const choice = page.locator('[data-ogp-c143-rollback-id]');
-        assert.equal(await choice.count(), 1);
-        await choice.check();
-        await action(page, 'ogp-numbering-confirm').click();
-        await page.locator('.modal').waitFor({ state: 'hidden' });
+      await action(page, 'ogp-numbering-confirm').click();
+      await page.locator('.modal').waitFor({state: 'hidden'});
+      const updated = (await read(page)).ogpRows;
+      for (const before of initial.ogpRows) {
+        const row = updated.find(row => row.id === before.id);
+        if (before.history.length > 1) { assert.deepEqual(row, before); continue; }
+        assert.deepEqual([row.numberingUpdate.target, row.wire], [before.reportedCell, firstWire[before.reportedCell]]);
+        assert.deepEqual([row.mapping, row.originalWire, row.history.slice(0,-1)], [before.mapping, before.originalWire, before.history]);
       }
+      await recordGroup(page, 'C143', ['85', '86', '87'], '337');
+      await recordGroup(page, 'C142', ['337', '338', '339'], '85');
+      assert.deepEqual((await read(page)).records[0], initial.records[0]);
+      await nav(page, 'ogp');
       const saved = await read(page);
-      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], ['337', priorWire]);
-      assert.equal(saved.ogpImages[0].data, initial.ogpImages[0].data);
+      assert.deepEqual(saved.ogpImages, initial.ogpImages);
       // Saving an import opens the unfinished view; explicitly set the preference
       // that the cache rebuild and offline reopening should preserve.
       await page.locator('#ogp-status').selectOption('all');

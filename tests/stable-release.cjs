@@ -187,11 +187,11 @@ async function test() {
     }, stable), 'candidate worker to activate');
     await observer.close();
     const page = await newPage(context, stable);
-    assert.match(await page.title(), /1\.2\.1/);
+    assert.match(await page.title(), /1\.3\.0/);
     assert.deepEqual(supportedLegacyFields(await app(page)), supportedLegacyFields(oldState));
     assert.deepEqual(await app(page, './previous-stable/storage.js'), oldState);
     const upgradedStatus = await workerStatus(page);
-    assert.equal(upgradedStatus.version, 'stable-1.2.1');
+    assert.equal(upgradedStatus.version, 'stable-1.3.0');
     assert.equal(upgradedStatus.ready, true);
     await nav(page, 'mapping');
     const checkpoint = await download(page, 'pre-upgrade-backup', 'upgrade-checkpoint.json');
@@ -274,7 +274,7 @@ async function test() {
     await act(page, 'ogp-import').click();
     await page.locator('#ogp-file').setInputFiles(manifestPath);
     await page.locator('#ogp-operator').fill('Release QA');
-    await page.locator('#ogp-numbering-mode').selectOption('legacy');
+    assert.equal(await page.locator('#ogp-import-form select').count(), 0);
     await submit(page, 'ogp-import-form');
     await page.locator('#ogp-confirmed').waitFor();
     assert.equal((await app(page)).ogpRows.length, 0);

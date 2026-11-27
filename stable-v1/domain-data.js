@@ -8,7 +8,14 @@
 
 import { FRONT_REFERENCE_MAPPING } from './channel-map-data.js';
 export { REFERENCE_MAP_METADATA, REFERENCE_COORDINATES } from './channel-map-data.js';
-export const BUILTIN_MAPPING = FRONT_REFERENCE_MAPPING;
+export const FIELD_VERIFIED_WIRES = {
+  C142: ['337', '338', '339'],
+  C143: ['85', '86', '87']
+};
+export const BUILTIN_MAPPING = FRONT_REFERENCE_MAPPING.map(entry => {
+  const wires = FIELD_VERIFIED_WIRES[entry.target];
+  return wires ? { ...entry, wires, source: '现场核对 · C142 / C143 两组线号', version: 'LD V3 / 现场修订 · 2026-11-27' } : entry;
+});
 
 export const MAP_IMAGE = {
   "width": 1204,
@@ -1278,7 +1285,7 @@ export const BACKSIDE_ORDER = [
 export const DOMAIN_NOTES = [
   "适用范围：用户提供的 LD V3 完整模块。图示坐标用于屏幕点选，不是机台 XY 坐标。",
   "正面信号编号已逐项录入：C1–C198 各有 3 根 wire，W1–594 无重复、无遗漏；屏蔽与保护环位点覆盖 W595–630。",
-  "完整编号依据为 LD_V3_Channels线编号_XY位置.pdf 第 1–2 页。此前教程中 C19 及 12 个附加位点的关系与新表一致。",
+  "2026-11-27 现场核对了两组线号。C142 对应 W337–W339，C143 对应 W85–W87。XY 坐标仍取自原表。",
   "教程第 6 页将拉力测试线写为 W630–640（5×2 根），与屏蔽线 W630 重叠，且含 11 个整数。新编号表未补充拉力测试 wire，此范围仍待核实。",
   "背面按用户提供图片中的 H/G/L/K/J/I 六个 cell 位置记录异常，不查询或录入 wire 编号。每组 5 根，实际打线顺序为 H→G→L→K→J→I。",
   "教程第 18 页提示背面图示与机台打线朝向上下、左右均反；图上左上 H 对应机台右下。",
