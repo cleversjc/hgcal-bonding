@@ -6,7 +6,7 @@ import { initMobileApp, getMobileAppState, promptMobileInstall, rebuildOfflineCa
 import {
   OGP_STATUSES, prepareOgpImport, appendOgpImport, editOgpRow, setOgpCompletion, hasOgpSpecialHandling,
   filterOgpRows, sortedOgpRows, duplicateOgpWires, ogpCsv, validateManifest, ogpLocation,
-  pendingOgpNumberingUpdate, requiresC143RollbackConfirmation, applyOgpNumberingUpdate
+  pendingOgpNumberingUpdate, applyOgpNumberingUpdate
 } from './ogp.js';
 import { parseOgpPdf } from './ogp-pdf.js';
 import {createArchive,readArchive} from './archive.js';
@@ -318,12 +318,12 @@ function ogpNumberingModal() {
   const sources = new Map((state.ogpImports || []).map(report => [report.id, report.source.name]));
   const changes = rows.map(row => {
     const location = pendingOgpNumberingUpdate(row);
-    const confirmation = requiresC143RollbackConfirmation(row) ? '<label class="check-label"><input type="checkbox" data-ogp-c143-rollback-id="' + e(row.id) + '">确认将本条改回 W337 · ' + e(sources.get(row.importId) || '') + '</label>' : '';
+    const confirmation = row.reportedCell === 'C143' ? '<label class="check-label"><input type="checkbox" data-ogp-c143-id="' + e(row.id) + '">确认将本条定位到 W85 · ' + e(sources.get(row.importId) || '') + '</label>' : '';
     return '<li><b class="mono">' + e(row.moduleId) + '</b><p>OGP ' + e(row.reportedCell) + ' → ' + e(location.target) +
       ' · W' + e(row.wire) + ' → W' + e(location.wires[0]) + ' · 第 ' + row.sourcePage + ' 页 / ' + row.sourceIndex + ' 项</p>' + confirmation + '</li>';
   }).join('');
   modalKind = 'ogp-numbering';
-  openModal('核对旧清单编号更新', '只应用于尚未处理、尚未修改的待办。原编号、原 Wire 和原图会保留。',
+  openModal('核对旧清单编号更新', '核对后可更新尚待处理的条目。原编号、原 Wire、原图和历次修改都会保留。',
     '<ul class="ogp-numbering-list">' + changes + '</ul>',
     button('close-modal', '取消') + button('ogp-numbering-confirm', '确认更新', 'check', 'primary'), true);
 }
@@ -339,7 +339,7 @@ function ogpPage() {
 }
 function ogpImportModal() {
   modalKind='ogp-import';stagedOgp=null;parsedOgpInput=null;
-  openModal('导入 OGP 报告','解析与预览不会写入本机记录。','<form id="ogp-import-form"><div class="form-grid"><div class="field full"><label class="req" for="ogp-file">PDF / OGP 预处理 JSON</label><input id="ogp-file" name="file" type="file" accept=".pdf,.json,application/pdf,application/json" required><span class="help">支持 HGCal YOLO 文字网格报告（PDF ≤30 MB）。手机解析受限时，可在电脑上将同类报告预处理为含原图的 JSON；其他版式需适配。</span></div><div class="field full"><label for="ogp-numbering-mode">报告编号</label><select id="ogp-numbering-mode" name="numbering"><option value="">未选择 · 有歧义时需确认</option><option value="legacy">旧 OGP 编号</option><option value="ld-v3">新版 LD V3 位点编号</option></select></div><div class="field full"><label class="req" for="ogp-operator">导入人</label><input id="ogp-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||'')+'"></div></div><p id="ogp-progress" role="status" class="essential-note">不会上传 PDF 或图片；解析在当前设备进行。</p></form>',button('close-modal','取消')+'<button class="button primary" type="submit" form="ogp-import-form">解析并预览</button>',true);
+  openModal('导入 OGP 报告','解析与预览不会写入本机记录。','<form id="ogp-import-form"><div class="form-grid"><div class="field full"><label class="req" for="ogp-file">PDF / OGP 预处理 JSON</label><input id="ogp-file" name="file" type="file" accept=".pdf,.json,application/pdf,application/json" required><span class="help">支持 HGCal YOLO 文字网格报告（PDF ≤30 MB）。手机解析受限时，可在电脑上将同类报告预处理为含原图的 JSON；其他版式需适配。</span></div><div class="field full"><label for="ogp-numbering-mode">报告编号</label><select id="ogp-numbering-mode" name="numbering"><option value="">未选择 · 有歧义时需确认</option><option value="legacy">旧 OGP 编号</option><option value="ld-v3">新版 LD V3 位点编号</option></select><span class="help">两种报告编号中的 C143 均对应数据库 C142，定位 Wire 为 W85。</span></div><div class="field full"><label class="req" for="ogp-operator">导入人</label><input id="ogp-operator" name="operator" required maxlength="60" value="'+e(activeModule()?.operator||'')+'"></div></div><p id="ogp-progress" role="status" class="essential-note">不会上传 PDF 或图片；解析在当前设备进行。</p></form>',button('close-modal','取消')+'<button class="button primary" type="submit" form="ogp-import-form">解析并预览</button>',true);
 }
 function showOgpPreview() {
   if(!stagedOgp)return;
@@ -367,7 +367,7 @@ function ogpImageModal(id,preview=false) {
 }
 function mappingPage() {
   const cov=coverage(entries);
-  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','上一版兼容 JSON','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 包含原图，文件更小；兼容 JSON 可供上一版恢复。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">2026.11.25 · 开发版 / OGP C143 对照回退</p><div class="settings-actions">'+button('rebuild-offline-cache','清除并重建离线缓存','reset','small')+button('clear-ogp-and-issues','清除 OGP 与问题记录','','small')+'</div></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
+  return '<div class="page-title"><h1>映射与资料</h1></div>'+mappingConflictPanel()+recoveryPanel()+'<div class="mapping-layout clean-settings"><div class="stack"><section class="card"><div class="card-head"><h2>数据备份</h2><span class="badge">仅存本机</span></div><div class="card-pad"><p class="data-count">'+state.modules.length+' 个模块 · '+state.records.length+' 条异常 · '+(state.ogpRows||[]).length+' 条 OGP 检测</p><div class="settings-actions">'+button('backup-zip','完整 ZIP 备份','download','primary')+button('backup-module','当前模块 ZIP','download')+button('backup','上一版兼容 JSON','download','small')+button('restore','恢复备份','upload')+'</div><p class="essential-note">'+e(backupSummary())+'</p><p class="essential-note">ZIP 包含原图，文件更小；兼容 JSON 可供上一版恢复。导出后请确认文件已保存。</p></div></section><section class="card"><div class="card-head"><h2>手机使用</h2>'+button('mobile-help','安装 / 帮助','','small')+'</div><div class="card-pad"><p data-mobile-status>'+mobileStatusLabel()+'</p><p class="release-label">2026.11.27 · 开发版 / OGP C143 定位 W85</p><div class="settings-actions">'+button('rebuild-offline-cache','清除并重建离线缓存','reset','small')+button('clear-ogp-and-issues','清除 OGP 与问题记录','','small')+'</div></div></section></div><div class="stack"><section class="card"><div class="card-head"><h2>LD V3 编号表</h2><span class="badge">'+(cov.signalCells===198&&cov.signalWires===594?'完整':'部分映射')+'</span></div><div class="card-pad"><p class="data-count">'+cov.signalCells+' 个 Cell · '+cov.signalWires+' 根信号线</p><p class="essential-note">'+cov.groups+' 个屏蔽 / 保护环位点</p><div class="settings-actions">'+button('import-mapping','导入映射','upload','small')+button('export-mapping','导出映射','download','small')+button('mapping-template','格式示例','download','small')+'</div></div></section><details class="card settings-details"><summary>屏蔽 / 保护环编号</summary><table class="mapping-table"><thead><tr><th>类型</th><th>位点</th><th>Wire</th></tr></thead><tbody>'+BUILTIN_MAPPING.filter(r=>r.kind!=='signal').map(r=>'<tr><td>'+e(KINDS[r.kind].split(' · ')[0])+'</td><td class="mono">'+e(r.target)+'</td><td class="mono">W'+e(r.wires[0])+'–'+e(r.wires.at(-1))+'</td></tr>').join('')+'</tbody></table></details><details class="card settings-details"><summary>来源与坐标说明</summary><div class="card-pad"><p class="essential-note">内置编号表：LD_V3_Channels线编号_XY位置.pdf，第 1–2 页。<br>'+e(REFERENCE_MAP_METADATA.version)+'</p>'+(state.mappingMeta?'<p class="essential-note">用户导入：'+e(state.mappingMeta.version)+' · '+e(state.mappingMeta.source)+' · '+date(state.mappingMeta.importedAt,true)+'</p>':'')+'<ul class="source-notes">'+[DOMAIN_NOTES[3],DOMAIN_NOTES[4],DOMAIN_NOTES[5],DOMAIN_NOTES[9],DOMAIN_NOTES[10],DOMAIN_NOTES[8]].map(n=>'<li>'+e(n)+'</li>').join('')+'</ul></div></details><details class="card settings-details"><summary>使用说明</summary><div class="card-pad"><p>选择模块 → 查询或点选位置 → 记录异常 → 更新处理结果。</p><p>记录人姓名仅是本地字段，不需要账号。各设备不自动同步；清除数据、卸载或换手机前先导出完整 JSON。</p><p>恢复备份只补入新记录；同 ID 保留本机版本。CSV 用于汇总，不包含照片。</p><p>误录可作废，原始记录保留，当前不能撤销。软件不自动判断模块合格或允许流转，未连接现场数据库。</p><p>仅适用于 LD V3 完整模块。其他模板需单独配置，验收与接地操作以当前现场 SOP 为准。</p></div></details></div></div>';
 }
 function openModal(title,subtitle,body,foot='',large=false) {
   modalEpoch++;
@@ -549,9 +549,9 @@ async function onAction(el) {
   if(a==='ogp-edit')ogpEditModal(el.dataset.id);
   if(a==='ogp-numbering-preview')ogpNumberingModal();
   if(a==='ogp-numbering-confirm'&&stagedOgpNumbering){
-    const confirmedC143Rollback = new Set($$('[data-ogp-c143-rollback-id]:checked').map(input => input.dataset.ogpC143RollbackId));
-    const expected = new Map([...stagedOgpNumbering].filter(([id, row]) => !requiresC143RollbackConfirmation(row) || confirmedC143Rollback.has(id)));
-    if (!expected.size) { error('请勾选要改回 W337 的 C143 条目。'); return; }
+    const confirmedC143 = new Set($$('[data-ogp-c143-id]:checked').map(input => input.dataset.ogpC143Id));
+    const expected = new Map([...stagedOgpNumbering].filter(([id, row]) => row.reportedCell !== 'C143' || confirmedC143.has(id)));
+    if (!expected.size) { error('请勾选要更新到 W85 的 C143 条目。'); return; }
     el.disabled = true;
     try {
       await commit(s => {
@@ -562,7 +562,7 @@ async function onAction(el) {
           if (row.updatedAt !== preview.updatedAt || row.wire !== preview.wire) throw new Error('待办已在其他窗口更新，请重新预览。');
           updated++;
           const operator = s.modules.find(module => module.id === row.moduleId)?.operator || row.history[0].operator;
-          return applyOgpNumberingUpdate(row, operator, undefined, { confirmedC143Rollback: confirmedC143Rollback.has(row.id) });
+          return applyOgpNumberingUpdate(row, operator, undefined, { confirmedC143: confirmedC143.has(row.id) });
         });
         if (updated !== expected.size) throw new Error('待办列表已变化，请重新预览。');
         return {...s, ogpRows: rows};

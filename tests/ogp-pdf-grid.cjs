@@ -30,6 +30,9 @@ async function saveImport(page, file, numbering, expected, before, ambiguous = t
   await parse(page);
   await page.locator('#ogp-confirmed').waitFor();
   assert.equal(await page.locator('.ogp-preview-item').count(), expected.length);
+  if (expected.some(([label]) => label === 'C143')) {
+    assert.match(await page.locator('.ogp-preview-item').filter({ hasText: 'OGP C143 → C142' }).first().innerText(), /W85\b/);
+  }
   assert.deepEqual(await read(page), before);
   await page.locator('#ogp-confirmed').check();
   await page.locator('[data-act="ogp-confirm"]').click();
@@ -94,9 +97,19 @@ async function test() {
       const offline = await saveImport(page, path.join(fixtures, 'new.pdf'), 'ld-v3', newRows, revised);
       assert.deepEqual(offline.ogpImages, revised.ogpImages);
       const c143 = path.join(fixtures, 'c143.pdf');
-      const legacyC143 = await saveImport(page, c143, 'legacy', [['C143', 'C143', '337']], offline, false);
-      const directC143 = await saveImport(page, c143, 'ld-v3', [['C143', 'C143', '337']], legacyC143, false);
-      await saveImport(page, c143, '', [['C143', 'C143', '337']], directC143, false);
+      const correctedRows = [['C143', 'C142', '85']];
+      const legacyC143 = await saveImport(page, c143, 'legacy', correctedRows, offline, false);
+      const directC143 = await saveImport(page, c143, 'ld-v3', correctedRows, legacyC143, false);
+      const automatic = await saveImport(page, c143, '', correctedRows, directC143, false);
+      const sourceRow = automatic.ogpRows.at(-1);
+      const report = automatic.ogpImports.at(-1);
+      const portable = { app: 'HGCAL OGP Import', schemaVersion: 1, source: report.source, pages: report.pages,
+        detections: [{ moduleId: sourceRow.moduleId, cell: sourceRow.reportedCell, confidence: sourceRow.confidence,
+          page: sourceRow.sourcePage, index: sourceRow.sourceIndex, caption: sourceRow.caption,
+          image: automatic.ogpImages.find(image => image.id === sourceRow.imageId) }] };
+      const json = { name: 'c143.ogp.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(portable)) };
+      const jsonLegacy = await saveImport(page, json, 'legacy', correctedRows, automatic, false);
+      await saveImport(page, json, 'ld-v3', correctedRows, jsonLegacy, false);
       // Seed mixed historical records with identical labels and varied provenance/status.
       await page.evaluate(async () => {
         const { loadState, saveState } = await import('./storage.js');
@@ -105,38 +118,45 @@ async function test() {
         const moduleId = '320TEST00000001';
         const manifest = { app: 'HGCAL OGP Import', schemaVersion: 1,
           source: { name: 'prior-report.pdf', sha256: 'b'.repeat(64), pageCount: 1, parser: 'QA' },
-          pages: [{ page: 1, moduleId, count: 6 }], detections: Array.from({ length: 6 }, (_, index) => ({
+          pages: [{ page: 1, moduleId, count: 7 }], detections: Array.from({ length: 7 }, (_, index) => ({
             moduleId, cell: 'C143', confidence: 0.64, page: 1, index: index + 1, caption: 'cell 143 conf 0.64', image: state.ogpImages[0]
           })) };
         const draft = prepareOgpImport(manifest, 'QA', undefined, 'ld-v3');
-        const wrong = {...draft.rows[0].mapping, target: 'C142', wires: ['85', '86', '87'], numberingVersion: '2026-11-20-c143'};
-        draft.rows.slice(0, 4).forEach(row => {
-          row.mapping = wrong;
-          row.wire = row.originalWire = row.history[0].wire = '85';
-        });
-        const migrated = draft.rows[5];
-        migrated.mapping.numberingVersion = '2026-11-18';
-        draft.rows[5] = {...editOgpRow(migrated, {wire: '85', operator: 'QA', status: 'pending', note: '',
-          reason: 'OGP 编号对照 2026-11-20-c143：C143 → C142，W337 → W85'}), numberingUpdate: wrong};
+        const nov20 = {...draft.rows[0].mapping, numberingVersion: '2026-11-20-c143'};
+        const nov25 = {...nov20, target: 'C143', wires: ['337','338','339'], numberingVersion: '2026-11-25-c143-revert'};
+        const asImported = (row, mapping) => {
+          const wire = mapping.wires[0];
+          return {...row, mapping, wire, originalWire: wire, history: [{...row.history[0], wire,
+            reason: '导入；按 OGP 编号对照 ' + mapping.numberingVersion + ' 定位 ' + mapping.target + '，取 LD V3 第一根 Wire'}]};
+        };
+        const historicalUpdate = (row, mapping) => ({...editOgpRow(row, {
+          wire: mapping.wires[0], operator: 'QA', status: 'pending', note: '',
+          reason: 'OGP 编号对照 ' + mapping.numberingVersion + '：C143 → ' + mapping.target + '，W' + row.wire + ' → W' + mapping.wires[0]
+        }), numberingUpdate: mapping});
+        draft.rows = draft.rows.map(row => asImported(row, nov25));
+        draft.rows[1] = asImported(draft.rows[1], {...nov25, numberingVersion: '2026-11-18-ld-v3-labels'});
         draft.rows[2] = setOgpCompletion(draft.rows[2], true, 'QA');
         draft.rows[3] = editOgpRow(draft.rows[3], { wire: '100', operator: 'QA', status: 'pending', note: '', reason: '机台核对' });
+        draft.rows[4] = asImported(draft.rows[4], nov20);
+        draft.rows[5] = historicalUpdate(asImported(draft.rows[5], nov20), nov25);
+        draft.rows[6] = historicalUpdate(historicalUpdate(asImported(draft.rows[6], {...nov25, numberingVersion: '2026-11-18'}), nov20), nov25);
         await saveState(appendOgpImport(state, draft));
       });
       await page.reload();
       await nav(page);
       const prior = await read(page);
       await page.locator('[data-act="ogp-numbering-preview"]').click();
-      const confirmations = page.locator('[data-ogp-c143-rollback-id]');
-      assert.equal(await confirmations.count(), 3);
-      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 3);
+      const confirmations = page.locator('[data-ogp-c143-id]');
+      assert.equal(await confirmations.count(), 4);
+      assert.equal(await confirmations.locator('xpath=..').filter({ hasText: 'prior-report.pdf' }).count(), 4);
       const confirm = page.locator('[data-act="ogp-numbering-confirm"]');
       await confirm.click();
       await error(page).filter({ hasText: '请勾选' }).waitFor();
       assert.deepEqual(await read(page), prior);
       const selected = confirmations.first();
-      const selectedId = await selected.getAttribute('data-ogp-c143-rollback-id');
+      const selectedId = await selected.getAttribute('data-ogp-c143-id');
       const migrated = confirmations.last();
-      const migratedId = await migrated.getAttribute('data-ogp-c143-rollback-id');
+      const migratedId = await migrated.getAttribute('data-ogp-c143-id');
       await selected.check();
       await migrated.check();
       await confirm.click();
@@ -147,12 +167,13 @@ async function test() {
       const original = prior.ogpRows.find(row => row.id === selectedId);
       const corrected = updated.ogpRows.find(row => row.id === selectedId);
       assert.deepEqual([corrected.mapping, corrected.originalWire, corrected.imageId, corrected.history[0]],
-        [original.mapping, '85', original.imageId, original.history[0]]);
-      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C143', '337']);
+        [original.mapping, '337', original.imageId, original.history[0]]);
+      assert.deepEqual([corrected.numberingUpdate.target, corrected.wire], ['C142', '85']);
       const beforeMigration = prior.ogpRows.find(row => row.id === migratedId);
       const afterMigration = updated.ogpRows.find(row => row.id === migratedId);
-      assert.equal(afterMigration.wire, '337');
+      assert.equal(afterMigration.wire, '85');
       assert.deepEqual(afterMigration.history.slice(0, -1), beforeMigration.history);
+      assert.deepEqual(afterMigration.history.map(event => event.wire), ['337', '85', '337', '85']);
       assert.deepEqual(errors, []);
       console.log('PASS: old numeric and split LD V3 labels, numbering collisions, original marked image, read-only failures and offline import at 390×844');
     } finally {

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const expected = require('./fixtures/ogp-numbering-2026-11-18.expected.json');
+const current = require('./fixtures/ogp-report-mappings.cjs').legacy;
 const [pdfPath, jsonPath, url = 'http://127.0.0.1:8765/'] = process.argv.slice(2);
 const out = process.env.BONDING_TEST_OUTPUT || '.dev-evidence/ogp-numbering';
 fs.mkdirSync(out, { recursive: true });
@@ -107,7 +108,7 @@ async function test() {
       const rows = state.ogpRows.slice(-22);
       for (const [index, row] of rows.entries()) {
         const detection = manifest.detections[index];
-        const mapping = expected[detection.cell] ?? Object.values(expected).find(([target]) => target === detection.cell);
+        const mapping = current[detection.cell] ?? Object.values(expected).find(([target]) => target === detection.cell);
         assert.equal(row.reportedCell, detection.cell);
         assert.deepEqual([row.mapping.target, row.originalWire], mapping);
         assert.equal(row.wire, row.originalWire);
@@ -124,7 +125,8 @@ async function test() {
     await (await csvEvent).saveAs(csvPath);
     const csv = fs.readFileSync(csvPath, 'utf8');
     assert.match(csv, /"mapped_target","ogp_numbering_version"/);
-    assert.ok(csv.includes(',"M","2026-11-25-c143-revert"'));
+    assert.ok(csv.includes(',"M","2026-11-27-c143-w85"'));
+    assert.match(csv, /"C143","85","85",[^\r\n]+,"C142","2026-11-27-c143-w85"/);
     assert.equal(await page.evaluate(async () => {
       const storage = await import('./storage.js');
       const { createArchive, readArchive } = await import('./archive.js');
@@ -173,7 +175,7 @@ async function test() {
     await page.locator('.shell').waitFor();
     assert.deepEqual(await read(), beforeRollback);
     assert.deepEqual(errors, []);
-    const result = { passed: true, corrections: 11, legacyRowsUpdated: 8, protectedRows: 3, pdfAndJsonRowsEach: 22,
+    const result = { passed: true, corrections: Object.keys(current).length, legacyRowsUpdated: 8, protectedRows: 3, pdfAndJsonRowsEach: 22,
       previewAndCancel: true, stalePreviewAtomic: true, sourcesAndImagesPreserved: true, duplicateRows: true,
       csv: true, jsonZip: true, offlinePreviousVersionRoundTrip: true };
     fs.writeFileSync(path.join(out, 'numbering-tests.json'), JSON.stringify(result, null, 2));

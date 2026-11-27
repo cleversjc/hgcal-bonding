@@ -11,8 +11,11 @@ const root = path.resolve(__dirname, '..');
 const old = path.resolve(process.argv[2]);
 const isDev = process.argv[3] === 'dev';
 const entry = isDev ? '' : 'stable-v1/';
-const priorVersion = isDev ? '2026-11-20-ogp-c143-v1' : 'stable-1.2.0';
-const currentVersion = isDev ? '2026-11-25-ogp-c143-revert-v1' : 'stable-1.2.1';
+const priorVersion = isDev ? '2026-11-25-ogp-c143-revert-v1' : 'stable-1.2.0';
+const currentVersion = isDev ? '2026-11-27-ogp-c143-w85-v1' : 'stable-1.2.1';
+const priorLabel = isDev ? /C143 对照回退/ : /1\.2\.0/;
+const priorWire = isDev ? '337' : '85';
+const expectedC143 = isDev ? ['C142', '85'] : ['C143', '337'];
 const cachePrefix = isDev ? 'hgcal-bonding-shell-' : 'hgcal-bonding-stable-v1-shell-';
 const fieldKey = isDev ? 'hgcal-bonding-field-session-v1' : 'hgcal-bonding-stable-field-session-v1';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -66,7 +69,7 @@ async function test() {
       }
       const oldPage = await open(url);
       await nav(oldPage, 'mapping');
-      assert.match(await oldPage.locator('.release-label').innerText(), isDev ? /C143 对照修正/ : /1\.2\.0/);
+      assert.match(await oldPage.locator('.release-label').innerText(), priorLabel);
       await nav(oldPage, 'ogp');
       await ready(oldPage);
       await startImport(oldPage);
@@ -74,7 +77,7 @@ async function test() {
       await parse(oldPage);
       await save(oldPage);
       const initial = await read(oldPage);
-      assert.equal(initial.ogpRows[0].wire, '85');
+      assert.equal(initial.ogpRows[0].wire, priorWire);
       assert.equal(initial.ogpImages.length, 1);
       await oldPage.locator('#ogp-status').selectOption('all');
       const preference = await oldPage.evaluate(key => localStorage.getItem(key), fieldKey);
@@ -95,7 +98,7 @@ async function test() {
       }
       const page = await activate(oldPage, root, priorVersion);
       await nav(page, 'mapping');
-      assert.match(await page.locator('.release-label').innerText(), isDev ? /C143 对照回退/ : /1\.2\.1/);
+      assert.match(await page.locator('.release-label').innerText(), isDev ? /C143 定位 W85/ : /1\.2\.1/);
       await nav(page, 'ogp');
       assert.deepEqual(await read(page), initial);
       assert.equal(await page.locator('#ogp-status').inputValue(), 'all');
@@ -112,16 +115,16 @@ async function test() {
         assert.deepEqual(await read(page), before);
         await save(page);
         const row = (await read(page)).ogpRows.at(-1);
-        assert.deepEqual([row.mapping.target, row.wire], ['C143', '337']);
+        assert.deepEqual([row.mapping.target, row.wire], expectedC143);
       }
       await action(page, 'ogp-numbering-preview').click();
-      const choice = page.locator('[data-ogp-c143-rollback-id]');
+      const choice = page.locator(isDev ? '[data-ogp-c143-id]' : '[data-ogp-c143-rollback-id]');
       assert.equal(await choice.count(), 1);
       await choice.check();
       await action(page, 'ogp-numbering-confirm').click();
       await page.locator('.modal').waitFor({ state: 'hidden' });
       const saved = await read(page);
-      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], ['337', '85']);
+      assert.deepEqual([saved.ogpRows[0].wire, saved.ogpRows[0].originalWire], [expectedC143[1], priorWire]);
       assert.equal(saved.ogpImages[0].data, initial.ogpImages[0].data);
       // Saving an import opens the unfinished view; explicitly set the preference
       // that the cache rebuild and offline reopening should preserve.
@@ -142,7 +145,7 @@ async function test() {
       await context.setOffline(false);
       const rolledBack = await activate(offline, old, currentVersion);
       await nav(rolledBack, 'mapping');
-      assert.match(await rolledBack.locator('.release-label').innerText(), isDev ? /C143 对照修正/ : /1\.2\.0/);
+      assert.match(await rolledBack.locator('.release-label').innerText(), priorLabel);
       assert.deepEqual(await read(rolledBack), saved);
       console.log('PASS: ' + (isDev ? 'development' : 'stable') + ' installed upgrade keeps records, original image, and preferences; C143 modes, confirmed migration, scoped cache rebuild, and offline reopen');
     } finally { await browser.close(); }
